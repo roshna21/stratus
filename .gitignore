@@ -1,0 +1,49 @@
+# ---- Secrets: never commit these ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+azure-credentials.json
+
+# ---- Terraform ----
+# Provider plugins: hundreds of MB, re-downloadable
+.terraform/
+.terraform.lock.hcl
+
+# State files: these describe your real infrastructure and can contain
+# passwords in plain text. They belong in remote storage, never in git.
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# ---- Editors / OS ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
