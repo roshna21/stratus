@@ -1,0 +1,15 @@
+{
+  "id": "e49fdec6",
+  "at": "2026-08-11T18:26:46.102770+00:00",
+  "request": "x",
+  "summary": "A thing.",
+  "files": {
+    "main.tf": "resource {}"
+  },
+  "created": [
+    "azurerm_storage_account.r0"
+  ],
+  "changed": [],
+  "destroyed": [],
+  "outcome": "applied"
+}
