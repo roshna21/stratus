@@ -10,12 +10,26 @@ const SUGGESTIONS = [
   "a place to keep database backups",
 ];
 
-type Message =
+type Body =
   | { kind: "you"; text: string }
   | { kind: "stratus"; text: string }
   | { kind: "error"; text: string }
   | { kind: "plan"; plan: PlanResponse; decided?: "built" | "cancelled" }
   | { kind: "building"; lines: string[]; done?: string };
+
+// The body union is named separately because Omit<> over a union collapses
+// to the keys they share, which is none of the interesting ones.
+type Message = Body & { key: number };
+
+/**
+ * A counter rather than an array index.
+ *
+ * The build log is written from inside an await, and by then the array has
+ * moved on. Addressing a message by the position it had when the request
+ * started meant the log was appended to a message that did not exist — the
+ * lines arrived from the server and were quietly dropped.
+ */
+let nextKey = 1;
 
 export default function BuildPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -32,7 +46,14 @@ export default function BuildPage() {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
 
-  const push = (m: Message) => setMessages((prev) => [...prev, m]);
+  const push = (m: Body) => {
+    const keyed = { ...m, key: nextKey++ } as Message;
+    setMessages((prev) => [...prev, keyed]);
+    return keyed.key;
+  };
+
+  const update = (key: number, change: (m: Message) => Message) =>
+    setMessages((prev) => prev.map((m) => (m.key === key ? change(m) : m)));
 
   async function ask(text: string) {
     if (!text.trim() || busy) return;
@@ -54,16 +75,12 @@ export default function BuildPage() {
     }
   }
 
-  async function decide(index: number, plan: PlanResponse, answer: string | null) {
+  async function decide(key: number, plan: PlanResponse, answer: string | null) {
     // Mark the plan as settled so its buttons cannot be pressed twice — the
     // approval is single-use on the server, and a second press would only
     // produce a confusing "no longer available".
-    setMessages((prev) =>
-      prev.map((m, i) =>
-        i === index && m.kind === "plan"
-          ? { ...m, decided: answer ? "built" : "cancelled" }
-          : m,
-      ),
+    update(key, (m) =>
+      m.kind === "plan" ? { ...m, decided: answer ? "built" : "cancelled" } : m,
     );
 
     if (!answer) {
@@ -72,8 +89,7 @@ export default function BuildPage() {
     }
 
     setBusy("Building");
-    const buildIndex = messages.length + 1;
-    push({ kind: "building", lines: [] });
+    const buildKey = push({ kind: "building", lines: [] });
 
     try {
       const started = await api.apply(plan.id!, answer);
@@ -83,24 +99,18 @@ export default function BuildPage() {
       }
 
       const finished = await followJob(started.job, (lines) => {
-        setMessages((prev) =>
-          prev.map((m, i) =>
-            i === buildIndex && m.kind === "building"
-              ? { ...m, lines: [...m.lines, ...lines] }
-              : m,
-          ),
+        update(buildKey, (m) =>
+          m.kind === "building" ? { ...m, lines: [...m.lines, ...lines] } : m,
         );
       });
 
       if (finished.status === "failed") {
         push({ kind: "error", text: finished.error ?? "The build failed." });
       } else {
-        setMessages((prev) =>
-          prev.map((m, i) =>
-            i === buildIndex && m.kind === "building"
-              ? { ...m, done: finished.result?.summary ?? "Done." }
-              : m,
-          ),
+        update(buildKey, (m) =>
+          m.kind === "building"
+            ? { ...m, done: finished.result?.summary ?? "Done." }
+            : m,
         );
       }
     } catch (err) {
@@ -116,8 +126,8 @@ export default function BuildPage() {
         {messages.length === 0 && <Welcome onPick={ask} busy={!!busy} />}
 
         <div className="space-y-5">
-          {messages.map((m, i) => (
-            <div key={i} className="rise">
+          {messages.map((m) => (
+            <div key={m.key} className="rise">
               {m.kind === "you" && <You text={m.text} />}
               {m.kind === "stratus" && <Says>{m.text}</Says>}
               {m.kind === "error" && <ErrorNote>{m.text}</ErrorNote>}
@@ -125,7 +135,7 @@ export default function BuildPage() {
                 <PlanCard
                   plan={m.plan}
                   decided={m.decided}
-                  onDecide={(answer) => decide(i, m.plan, answer)}
+                  onDecide={(answer) => decide(m.key, m.plan, answer)}
                 />
               )}
               {m.kind === "building" && <Building lines={m.lines} done={m.done} />}
