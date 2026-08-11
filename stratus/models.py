@@ -97,6 +97,103 @@ class Resource(BaseModel):
         return self.origin is Origin.MANAGED
 
 
+class Action(str, Enum):
+    """What is about to happen to one resource.
+
+    These mirror Terraform's own vocabulary, because inventing our own would
+    mean a translation layer that can silently disagree with what actually
+    runs. The user never sees these strings — they get English, built from
+    them.
+    """
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+
+    REPLACE = "replace"
+    """Delete and recreate. Terraform reports this as a delete plus a create,
+    but they are one indivisible event and must be shown to the user as one:
+    "replace" means downtime, and anything stored on the old resource is gone.
+    Presenting it as two separate lines hides that."""
+
+    NO_OP = "no-op"
+    """Already in the desired state. Nothing happens."""
+
+    @property
+    def is_destructive(self) -> bool:
+        """Whether this action can lose data or cause an outage.
+
+        This is the single most important question the safety layer asks, so
+        it lives on the type itself rather than being re-derived by every
+        caller that needs it.
+        """
+        return self in (Action.DELETE, Action.REPLACE)
+
+
+class PlannedChange(BaseModel):
+    """One resource that a plan intends to change."""
+
+    address: str
+    """Terraform's internal handle, e.g. "azurerm_storage_account.data".
+    Used to correlate a plan with what actually happened afterwards."""
+
+    type: str
+    """Terraform's resource type, e.g. "azurerm_storage_account"."""
+
+    name: str
+    """The name given in the configuration."""
+
+    action: Action
+
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    """Settings before and after. `before` is None for a create, `after` is
+    None for a delete."""
+
+
+class Plan(BaseModel):
+    """What Terraform intends to do, before anything has been done.
+
+    This is the object the user approves or rejects. Everything shown to them
+    at the approval step is derived from here, so it must be a complete and
+    honest account — anything omitted here is a change that happens without
+    consent.
+    """
+
+    changes: list[PlannedChange] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict, repr=False)
+    """The full JSON Terraform produced. Kept so that anything we did not
+    think to model is still available rather than discarded."""
+
+    def of(self, *actions: Action) -> list[PlannedChange]:
+        """Changes matching any of the given actions."""
+        wanted = set(actions)
+        return [c for c in self.changes if c.action in wanted]
+
+    @property
+    def destructive_changes(self) -> list[PlannedChange]:
+        """Everything that deletes or replaces something.
+
+        If this is non-empty the user must give explicit confirmation. That
+        rule is enforced in the approval layer, not here.
+        """
+        return [c for c in self.changes if c.action.is_destructive]
+
+    @property
+    def is_destructive(self) -> bool:
+        return bool(self.destructive_changes)
+
+    @property
+    def is_empty(self) -> bool:
+        """True when nothing would change.
+
+        This is the answer that makes asking twice safe: if the user requests
+        something they already have, the plan comes back empty and Stratus can
+        say "you already have this" instead of building a duplicate.
+        """
+        return all(c.action is Action.NO_OP for c in self.changes)
+
+
 class Snapshot(BaseModel):
     """Everything found in one account at one moment in time.
 
