@@ -1,0 +1,6 @@
+# Data models and validation
+pydantic>=2.9
+
+# Azure: authentication + listing what exists in an account
+azure-identity>=1.19
+azure-mgmt-resource>=23.1
