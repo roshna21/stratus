@@ -17,7 +17,12 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from stratus.agent.prompts import SYSTEM_PROMPT, build_repair_message, build_user_message
+from stratus.agent.prompts import (
+    DEFAULT_REGION,
+    SYSTEM_PROMPT,
+    build_repair_message,
+    build_user_message,
+)
 from stratus.agent.providers import ModelProvider, TokenUsage, get_provider
 from stratus.models import Snapshot
 
@@ -90,6 +95,7 @@ class TerraformGenerator:
         request: str,
         existing: Snapshot,
         validate: Callable[[dict[str, str]], Any] | None = None,
+        region: str = DEFAULT_REGION,
     ) -> GeneratedConfig:
         """Produce configuration for a request.
 
@@ -100,7 +106,7 @@ class TerraformGenerator:
         this point later.
         """
         messages: list[dict[str, Any]] = [
-            {"role": "user", "content": build_user_message(request, existing)}
+            {"role": "user", "content": build_user_message(request, existing, region)}
         ]
 
         self.repairs_used = 0

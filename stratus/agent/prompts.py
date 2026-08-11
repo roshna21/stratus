@@ -68,8 +68,9 @@ globally unique across all of Azure, 3-24 characters, lowercase letters and
 digits only, with no hyphens. Append a short random suffix to anything that
 must be globally unique, using `random_string`.
 
-**Default region is `eastus`** unless the person names one. Some regions
-refuse new subscriptions, and this one usually does not.
+**Use the region you are told to use** in the request below, unless the
+person explicitly names a different one. Free-tier capacity varies by region
+and by day, so which one to use is a decision Stratus makes, not you.
 
 ## Your summary
 
@@ -82,20 +83,36 @@ provider, SKU, or any `azurerm_` type name.
 
 If you had to decide something they did not specify, list it under
 assumptions, in the same plain language. Say what you chose and why in a few
-words: "put it in the eastus region, because you didn't say where".
+words: "picked the smallest size, because you said it was a small project".
 """
 
 
-def build_user_message(request: str, existing: Snapshot) -> str:
+DEFAULT_REGION = "eastus"
+"""Where to build when nothing else is specified.
+
+Not baked into the system prompt: which region has free-tier capacity changes
+by the day, and when one runs out the user needs to move without waiting for
+a code change. Overridden with STRATUS_REGION.
+"""
+
+FALLBACK_REGIONS = ["westus2", "uksouth", "northeurope", "centralindia", "southeastasia"]
+"""Suggested when a region turns out to have no room. Not tried automatically:
+a failed apply may have left resources behind, and silently rebuilding
+somewhere else would strand them."""
+
+
+def build_user_message(
+    request: str, existing: Snapshot, region: str = DEFAULT_REGION
+) -> str:
     """Assemble the per-request half of the conversation.
 
-    The existing inventory goes here rather than in the system prompt so the
-    system prompt stays byte-identical between requests. That matters for
-    cost: an unchanging prefix can be cached and served at roughly a tenth of
-    the price, and any change to it — even one resource appearing — would
-    throw that away.
+    The existing inventory and the region go here rather than in the system
+    prompt so the system prompt stays byte-identical between requests. That
+    matters for cost: an unchanging prefix can be cached and served at roughly
+    a tenth of the price, and any change to it — even one resource appearing,
+    or a different region — would throw that away.
     """
-    lines: list[str] = []
+    lines: list[str] = [f"Build in the {region} region unless told otherwise.", ""]
 
     if len(existing) == 0:
         lines.append("This account is currently empty.")

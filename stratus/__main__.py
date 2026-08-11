@@ -77,7 +77,11 @@ def cmd_build(args, parser) -> int:
             return ""
 
     def progress(message: str) -> None:
-        print(f"  {message}")
+        # flush matters: Python buffers stdout when it is not a terminal, so
+        # without it every progress line arrives at once when the command
+        # ends. Steps here take minutes, and a user watching a silent screen
+        # has no way to tell working from hung.
+        print(f"  {message}", flush=True)
 
     try:
         stratus = Stratus(_subscription(args, parser), workspace=args.workspace)
@@ -104,6 +108,9 @@ def cmd_build(args, parser) -> int:
 def cmd_destroy(args, parser) -> int:
     from stratus.pipeline import Stratus
 
+    def progress(message: str) -> None:
+        print(f"  {message}", flush=True)
+
     def confirm(text: str) -> str:
         print("\n" + "-" * 64)
         print(text)
@@ -115,7 +122,7 @@ def cmd_destroy(args, parser) -> int:
 
     try:
         stratus = Stratus(_subscription(args, parser), workspace=args.workspace)
-        outcome = stratus.destroy(confirm=confirm)
+        outcome = stratus.destroy(confirm=confirm, on_progress=progress)
     except Exception as exc:  # noqa: BLE001
         return _fail("Couldn't tear that down.", str(exc))
 

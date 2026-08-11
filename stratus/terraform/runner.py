@@ -15,21 +15,45 @@ something they never saw.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from stratus.models import Plan
 from stratus.terraform.plan import parse_plan
 
 PLAN_FILENAME = "stratus.tfplan"
 
-# Terraform can legitimately take minutes to build cloud resources, so these
-# are generous. They exist only to stop a wedged process hanging forever.
 INIT_TIMEOUT = 300
 PLAN_TIMEOUT = 300
-APPLY_TIMEOUT = 1800
+
+APPLY_TIMEOUT = 1200
+"""Twenty minutes.
+
+Some cloud resources genuinely take a quarter of an hour to build, so this
+cannot be tight. It was thirty minutes, which turned out to be far too long:
+when Azure's App Service API began returning gateway timeouts, Terraform
+retried in silence and the command sat there for sixteen minutes looking
+identical to a hang. Streaming progress is the real fix; this is the backstop.
+"""
+
+LOCK_ID = re.compile(r"^\s*ID:\s*([0-9a-f-]{36})", re.MULTILINE)
+
+CAPACITY_SIGNS = (
+    "GatewayTimeout",
+    "RequestDisallowedByAzure",
+    "SubscriptionIsOverQuotaForSku",
+    "not accepting new customers",
+    "There are no available instances",
+)
+"""What Azure says when a region has no room for you.
+
+None of these mention capacity. They surface as timeouts, quota errors, or
+flat refusals, and on a free subscription they are common enough to be worth
+recognising by name rather than leaving the user to interpret.
+"""
 
 
 class TerraformError(RuntimeError):
@@ -49,6 +73,72 @@ class TerraformError(RuntimeError):
         super().__init__(
             f"`{' '.join(command)}` failed with exit code {returncode}\n\n{detail}"
         )
+
+
+class StateLocked(TerraformError):
+    """Someone — possibly a dead process — is holding the state lock.
+
+    The lock exists so two operations cannot write the state at once. It is
+    doing its job here, but the message Terraform prints is long and does not
+    say what to do, and the commonest cause is a previous run that was killed
+    and never released it.
+    """
+
+    def __init__(self, base: TerraformError, workdir: Path):
+        self.lock_id = _extract_lock_id(base.stdout + base.stderr)
+        self.workdir = workdir
+        super().__init__(base.command, base.returncode, base.stdout, base.stderr)
+
+    def __str__(self) -> str:
+        unlock = (
+            f"terraform force-unlock {self.lock_id}"
+            if self.lock_id
+            else "terraform force-unlock <id from the message above>"
+        )
+        return (
+            "The infrastructure record is locked by another operation.\n\n"
+            "This is a safety mechanism: two operations writing at once would "
+            "corrupt the record of what exists. Usually it means an earlier "
+            "run was interrupted and never released the lock.\n\n"
+            "First check nothing is genuinely still running:\n\n"
+            "    pgrep -fl terraform\n\n"
+            "If that prints nothing, release the lock:\n\n"
+            f"    cd {self.workdir}\n"
+            f"    {unlock}\n\n"
+            "Only do this when you are certain no operation is in progress. "
+            "Unlocking underneath a live run is how state gets corrupted."
+        )
+
+
+class CapacityUnavailable(TerraformError):
+    """The region has no room, however it chose to phrase that."""
+
+    def __init__(self, base: TerraformError, region_hint: str | None = None):
+        self.region_hint = region_hint
+        super().__init__(base.command, base.returncode, base.stdout, base.stderr)
+
+    def __str__(self) -> str:
+        detail = (self.stderr or self.stdout).strip()
+        return (
+            "Azure could not provide what was asked for in that region.\n\n"
+            "Free-tier capacity is limited and varies by region and by day. "
+            "Azure rarely says so directly — it surfaces as a timeout, a quota "
+            "error, or a flat refusal.\n\n"
+            "Try somewhere else:\n\n"
+            "    STRATUS_REGION=westus2 python -m stratus build \"...\"\n\n"
+            "Regions usually worth trying: westus2, uksouth, northeurope, "
+            "centralindia, southeastasia.\n\n"
+            f"Azure said:\n{detail[:600]}"
+        )
+
+
+def _extract_lock_id(text: str) -> str | None:
+    match = LOCK_ID.search(text)
+    return match.group(1) if match else None
+
+
+def _looks_like_capacity(text: str) -> bool:
+    return any(sign in text for sign in CAPACITY_SIGNS)
 
 
 class TerraformRunner:
@@ -77,7 +167,7 @@ class TerraformRunner:
     # -- running commands ---------------------------------------------------
 
     def _run(self, args: list[str], timeout: int) -> subprocess.CompletedProcess:
-        """Run one terraform subcommand.
+        """Run one terraform subcommand and wait for it.
 
         Always passes -input=false. Without it, Terraform will stop and wait
         for someone to type an answer when it wants a variable — and since
@@ -92,8 +182,77 @@ class TerraformRunner:
             timeout=timeout,
         )
         if result.returncode != 0:
-            raise TerraformError(command, result.returncode, result.stdout, result.stderr)
+            raise self._interpret(
+                TerraformError(command, result.returncode, result.stdout, result.stderr)
+            )
         return result
+
+    def _run_streaming(
+        self,
+        args: list[str],
+        timeout: int,
+        on_line: Callable[[str], None] | None = None,
+    ) -> str:
+        """Run a subcommand, reporting each line as it appears.
+
+        Used for apply and destroy, which take minutes. Capturing their output
+        and showing it at the end means the user stares at a silent screen and
+        cannot tell slow progress from a stuck process — which is exactly how
+        sixteen minutes of Azure gateway timeouts went unnoticed.
+        """
+        command = [self.binary, *args]
+        collected: list[str] = []
+
+        process = subprocess.Popen(  # noqa: S603 - args built here, never from user text
+            command,
+            cwd=self.workdir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                collected.append(line)
+                if on_line:
+                    stripped = line.rstrip()
+                    if stripped:
+                        on_line(stripped)
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise TerraformError(
+                command,
+                -1,
+                "".join(collected),
+                f"Gave up after {timeout // 60} minutes.\n\n"
+                "Terraform was still retrying. That usually means the cloud "
+                "is refusing the request rather than working slowly — check "
+                "the messages above for what it kept trying.",
+            ) from None
+
+        output = "".join(collected)
+        if process.returncode != 0:
+            raise self._interpret(TerraformError(command, process.returncode, output, ""))
+        return output
+
+    def _interpret(self, error: TerraformError) -> TerraformError:
+        """Recognise failures worth explaining rather than passing through raw.
+
+        Terraform's messages are accurate and unhelpful. These two come up
+        often enough on a free subscription that leaving the user to decode
+        them is a poor trade.
+        """
+        text = error.stdout + error.stderr
+
+        if "Error acquiring the state lock" in text or "state blob is already locked" in text:
+            return StateLocked(error, self.workdir)
+        if _looks_like_capacity(text):
+            return CapacityUnavailable(error)
+        return error
 
     # -- writing configuration ----------------------------------------------
 
@@ -157,11 +316,11 @@ class TerraformRunner:
         )
         return parse_plan(json.loads(shown.stdout))
 
-    def apply(self) -> str:
+    def apply(self, on_line: Callable[[str], None] | None = None) -> str:
         """Execute the plan that was saved by the last plan() call.
 
-        Deliberately takes no arguments. Passing a configuration here would
-        let a caller apply something other than what was reviewed.
+        Takes no configuration. Passing one here would let a caller apply
+        something other than what was reviewed; `on_line` only observes.
         """
         plan_file = self.workdir / PLAN_FILENAME
         if not plan_file.exists():
@@ -172,27 +331,37 @@ class TerraformRunner:
                 "No saved plan to apply. Call plan() first — Stratus never "
                 "applies anything a human has not seen.",
             )
-        result = self._run(
+        output = self._run_streaming(
             ["apply", "-input=false", "-no-color", "-auto-approve", PLAN_FILENAME],
             APPLY_TIMEOUT,
+            on_line=on_line,
         )
         # The saved plan is single-use. Removing it prevents the same approval
         # being replayed later against a cloud account that has since moved on.
         plan_file.unlink(missing_ok=True)
-        return result.stdout
+        return output
 
-    def destroy(self) -> str:
+    def destroy(self, on_line: Callable[[str], None] | None = None) -> str:
         """Tear everything in this directory back down.
 
-        Used to clean up after demos and tests. The user-facing confirmation
-        gate lives above this, in the approval layer — by the time execution
-        reaches here, permission has already been given.
+        The user-facing confirmation gate lives above this, in the approval
+        layer — by the time execution reaches here, permission has been given.
         """
-        result = self._run(
+        return self._run_streaming(
             ["destroy", "-input=false", "-no-color", "-auto-approve"],
             APPLY_TIMEOUT,
+            on_line=on_line,
         )
-        return result.stdout
+
+    def force_unlock(self, lock_id: str) -> None:
+        """Release a lock left behind by an interrupted run.
+
+        Not called automatically anywhere, and it should not be: a lock held
+        by a *live* operation is the one thing standing between you and a
+        corrupted state file. StateLocked prints this as a command for the
+        user to run once they have checked nothing is running.
+        """
+        self._run(["force-unlock", "-force", lock_id], PLAN_TIMEOUT)
 
     def state_resources(self) -> list[str]:
         """List the resource addresses Terraform currently believes it owns.

@@ -15,11 +15,13 @@ that runs the same as the thing that was approved.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from stratus.agent import GeneratedConfig, TerraformGenerator
+from stratus.agent.prompts import DEFAULT_REGION
 from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
 from stratus.explain import confirmation_is_valid, explain
@@ -60,19 +62,36 @@ class Stratus:
         workspace: str = "default",
         provider=None,
         workspace_root: Path | None = None,
+        region: str | None = None,
+        *,
+        reader=None,
+        runner=None,
+        generator=None,
+        backend=None,
     ) -> None:
+        """Build a workspace, or accept ready-made parts.
+
+        The four keyword-only arguments exist for tests. Without them a test
+        has to reach in and assign attributes after construction, which breaks
+        silently every time a new one is added — and a test that breaks when
+        you add a field is a test that stops protecting the thing it was
+        written for.
+        """
         self.subscription_id = subscription_id
         self.workspace = workspace
+        self.region = region or os.getenv("STRATUS_REGION") or DEFAULT_REGION
 
         root = workspace_root or WORKSPACE_ROOT
-        self.runner = TerraformRunner(root / workspace)
-        self.reader = LiveAzureReader(subscription_id)
-        self.generator = TerraformGenerator(provider=provider)
+        self.runner = runner or TerraformRunner(root / workspace)
+        self.reader = reader or LiveAzureReader(subscription_id)
+        self.generator = generator or TerraformGenerator(provider=provider)
 
         # One state file per workspace. Sharing one would make unrelated
         # requests block each other on the lock, and would let a mistake in
         # one damage another.
-        self.backend = StateStorage(subscription_id).config_for(f"{workspace}.tfstate")
+        self.backend = backend or StateStorage(subscription_id).config_for(
+            f"{workspace}.tfstate"
+        )
 
     def build(
         self,
@@ -94,7 +113,9 @@ class Stratus:
         outcome.existing_before = existing
 
         on_progress("Working out what to build...")
-        config = self.generator.generate(request, existing, validate=self._validate)
+        config = self.generator.generate(
+            request, existing, validate=self._validate, region=self.region
+        )
         outcome.config = config
         outcome.repairs_used = self.generator.repairs_used
         outcome.cost_usd = self.generator.cost
@@ -117,12 +138,19 @@ class Stratus:
 
         outcome.approved = True
         on_progress("Building it...")
-        self.runner.apply()
+        # Progress is streamed rather than collected. Terraform prints a line
+        # every ten seconds while a resource is being created, and those lines
+        # are the only way to tell slow progress from a stuck retry loop.
+        self.runner.apply(on_line=_progress_filter(on_progress))
         outcome.applied = True
 
         return outcome
 
-    def destroy(self, confirm: Callable[[str], str]) -> Outcome:
+    def destroy(
+        self,
+        confirm: Callable[[str], str],
+        on_progress: Callable[[str], None] = lambda _: None,
+    ) -> Outcome:
         """Tear down everything in this workspace."""
         outcome = Outcome(request=f"destroy everything in '{self.workspace}'")
 
@@ -143,7 +171,8 @@ class Stratus:
             return outcome
 
         outcome.approved = True
-        self.runner.destroy()
+        on_progress("Tearing it down...")
+        self.runner.destroy(on_line=_progress_filter(on_progress))
         outcome.applied = True
         return outcome
 
@@ -160,3 +189,31 @@ class Stratus:
             self.runner.write_config(name, contents)
         self.runner.init()
         self.runner.validate()
+
+
+def _progress_filter(on_progress: Callable[[str], None]) -> Callable[[str], None]:
+    """Pass on the Terraform lines a person would want, and drop the rest.
+
+    Terraform is chatty. Forwarding every line buries the useful ones —
+    "Creating...", "Still creating... [1m0s elapsed]", "Creation complete" —
+    under provider noise and blank separators. Those three are what tell a
+    watcher the difference between working and wedged, so they are what gets
+    through.
+    """
+    interesting = (
+        "Creating...",
+        "Still creating...",
+        "Creation complete",
+        "Destroying...",
+        "Still destroying...",
+        "Destruction complete",
+        "Modifying...",
+        "Modifications complete",
+        "Error",
+    )
+
+    def forward(line: str) -> None:
+        if any(marker in line for marker in interesting):
+            on_progress(line.strip())
+
+    return forward

@@ -33,28 +33,34 @@ def _plan(*actions: Action) -> Plan:
 
 
 def _stratus(plan: Plan, tmp_path) -> Stratus:
-    """A Stratus with every external dependency replaced."""
-    s = Stratus.__new__(Stratus)
-    s.subscription_id = "test-sub"
-    s.workspace = "test"
+    """A Stratus with every external dependency replaced.
 
-    s.reader = MagicMock()
-    s.reader.read.return_value = Snapshot(subscription_id="test-sub")
+    Built through the real constructor with parts injected, so adding a field
+    to Stratus cannot silently leave this half-initialised.
+    """
+    reader = MagicMock()
+    reader.read.return_value = Snapshot(subscription_id="test-sub")
 
-    s.generator = MagicMock()
-    s.generator.generate.return_value = GeneratedConfig(
+    generator = MagicMock()
+    generator.generate.return_value = GeneratedConfig(
         files=[GeneratedFile(filename="main.tf", contents="resource {}")],
         summary="A thing.",
     )
-    s.generator.repairs_used = 0
-    s.generator.cost = 0.0
+    generator.repairs_used = 0
+    generator.cost = 0.0
 
-    s.runner = MagicMock()
-    s.runner.plan.return_value = plan
-    s.runner.state_resources.return_value = []
+    runner = MagicMock()
+    runner.plan.return_value = plan
+    runner.state_resources.return_value = []
 
-    s.backend = MagicMock()
-    return s
+    return Stratus(
+        "test-sub",
+        workspace="test",
+        reader=reader,
+        runner=runner,
+        generator=generator,
+        backend=MagicMock(),
+    )
 
 
 class TestApprovalGate:
