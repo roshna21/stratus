@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/*
+ * One palette, defined once, used everywhere. Colours scattered through
+ * components drift apart within a week.
+ */
+@theme {
+  --color-ink: #0b0d13;
+  --color-panel: #12151d;
+  --color-panel-2: #171b25;
+  --color-line: #232838;
+  --color-text: #e7e9f0;
+  --color-dim: #949cad;
+  --color-accent: #6ea8fe;
+  --color-accent-dim: #2f5fa8;
+  --color-ok: #7ec699;
+  --color-warn: #f0b849;
+  --color-danger: #f2777a;
+
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A quieter scrollbar; the default light one cuts through a dark page. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #303648;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.25s ease-out both;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+/* Respect a preference for less movement rather than overriding it. */
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pulse-soft {
+    animation: none;
+  }
+}

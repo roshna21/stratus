@@ -26,11 +26,13 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from stratus.cost import describe as describe_cost
 from stratus.explain import explain
+from stratus.jobs import Jobs
 from stratus.policy import describe_warnings
 from stratus.web_page import PAGE
 
@@ -82,6 +84,22 @@ class ApplyRequest(BaseModel):
 def create_app(subscription_id: str | None = None) -> FastAPI:
     app = FastAPI(title="Stratus", docs_url="/api/docs")
     pending: dict[str, Pending] = {}
+    jobs = Jobs()
+
+    # The Next.js front end runs on its own port in development. In
+    # production it is built to static files and served by this same app, so
+    # this only matters while developing — but without it the browser blocks
+    # every request and the error it shows names CORS rather than the cause.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        allow_origin_regex=r"http://localhost:\d+",
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     def _subscription() -> str:
         found = subscription_id or os.getenv("AZURE_SUBSCRIPTION_ID")
@@ -171,8 +189,14 @@ def create_app(subscription_id: str | None = None) -> FastAPI:
 
     @app.post("/api/apply")
     def apply(body: ApplyRequest) -> dict[str, Any]:
-        """Carry out a plan that was described and approved."""
+        """Start carrying out a plan that was described and approved.
+
+        Returns a job to watch rather than waiting for the build. A build
+        takes minutes, and an HTTP request that waits that long hits a
+        timeout somewhere between the browser and here.
+        """
         from stratus.explain import confirmation_is_valid
+        from stratus.models import Action
 
         entry = pending.get(body.id)
         if entry is None:
@@ -184,8 +208,7 @@ def create_app(subscription_id: str | None = None) -> FastAPI:
         if entry.expired:
             del pending[body.id]
             raise HTTPException(
-                410,
-                "That plan is too old to be trusted. Ask again to get a fresh one.",
+                410, "That plan is too old to be trusted. Ask again to get a fresh one."
             )
 
         stratus = entry.stratus
@@ -199,32 +222,32 @@ def create_app(subscription_id: str | None = None) -> FastAPI:
         # replayed against an account that has since moved on.
         del pending[body.id]
 
-        lines: list[str] = []
-        try:
-            stratus.runner.apply(on_line=lines.append)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(500, str(exc)) from exc
+        def work(log: Any) -> dict[str, Any]:
+            stratus.runner.apply(on_line=log)
+            record = stratus.history.record(
+                request=entry.request,
+                summary=entry.config.summary,
+                files=entry.config.as_dict(),
+                created=[c.address for c in proposed.of(Action.CREATE)],
+                changed=[c.address for c in proposed.of(Action.UPDATE, Action.REPLACE)],
+                destroyed=[c.address for c in proposed.of(Action.DELETE)],
+            )
+            return {
+                "applied": True,
+                "summary": entry.config.summary,
+                "change_id": record.id,
+            }
 
-        from stratus.models import Action
+        job = jobs.start("build", work)
+        return {"applied": None, "job": job.id}
 
-        record = stratus.history.record(
-            request=entry.request,
-            summary=entry.config.summary,
-            files=entry.config.as_dict(),
-            created=[c.address for c in proposed.of(Action.CREATE)],
-            changed=[c.address for c in proposed.of(Action.UPDATE, Action.REPLACE)],
-            destroyed=[c.address for c in proposed.of(Action.DELETE)],
-        )
-
-        return {
-            "applied": True,
-            "message": "Done.",
-            "summary": entry.config.summary,
-            "change_id": record.id,
-            # The tail only. The full Terraform log is long and mostly
-            # repeated "still creating" lines.
-            "log": [line for line in lines if line.strip()][-20:],
-        }
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str, since: int = 0) -> dict[str, Any]:
+        """How a running job is doing, with only log lines not yet seen."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "No such job.")
+        return job.snapshot(since)
 
     @app.get("/api/history")
     def history(workspace: str = "default") -> dict[str, Any]:

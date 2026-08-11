@@ -8,6 +8,7 @@ survive two separate requests, and nothing may be re-planned in between.
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from unittest.mock import MagicMock
 
@@ -96,13 +97,42 @@ class TestPlanning:
         assert "id" not in body
 
 
+def _apply_and_wait(client, plan_id: str, answer: str, timeout: float = 5.0) -> dict:
+    """Approve a plan and wait for the resulting job.
+
+    Applying is no longer synchronous: it starts a job and returns. A test
+    that read the first response would see `applied: None` and conclude
+    nothing happened.
+    """
+    started = client.post("/api/apply", json={"id": plan_id, "answer": answer}).json()
+    if not started.get("job"):
+        return started  # refused, or cancelled — nothing was started
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        snapshot = client.get(f"/api/jobs/{started['job']}").json()
+        if snapshot["status"] != "running":
+            return {"job": snapshot, **(snapshot.get("result") or {})}
+        time.sleep(0.02)
+    raise AssertionError("the job never finished")
+
+
 class TestApproval:
     def test_applies_what_was_described(self, client):
         c, holder = client
         pending = c.post("/api/plan", json={"request": "x"}).json()
-        r = c.post("/api/apply", json={"id": pending["id"], "answer": "yes"})
-        assert r.json()["applied"]
+        result = _apply_and_wait(c, pending["id"], "yes")
+        assert result["applied"]
         holder["instance"].runner.apply.assert_called_once()
+
+    def test_returns_a_job_rather_than_waiting(self, client):
+        # A build takes minutes. A request that waits for one hits a timeout
+        # somewhere between the browser and here.
+        c, _ = client
+        pending = c.post("/api/plan", json={"request": "x"}).json()
+        started = c.post("/api/apply", json={"id": pending["id"], "answer": "yes"}).json()
+        assert started["job"]
+        assert started["applied"] is None
 
     def test_never_replans_between_the_two_requests(self, client):
         # The property the whole approval step exists to guarantee. If the
@@ -126,7 +156,7 @@ class TestApproval:
         # against an account that has moved on.
         c, _ = client
         pending = c.post("/api/plan", json={"request": "x"}).json()
-        c.post("/api/apply", json={"id": pending["id"], "answer": "yes"})
+        _apply_and_wait(c, pending["id"], "yes")
         again = c.post("/api/apply", json={"id": pending["id"], "answer": "yes"})
         assert again.status_code == 404
 
@@ -176,15 +206,14 @@ class TestDestructivePlans:
         c, holder = client
         holder["plan"] = _plan(Action.DELETE)
         pending = c.post("/api/plan", json={"request": "remove it"}).json()
-        r = c.post("/api/apply", json={"id": pending["id"], "answer": "DELETE"})
-        assert r.json()["applied"]
+        assert _apply_and_wait(c, pending["id"], "DELETE")["applied"]
 
 
 class TestHistoryRecording:
     def test_a_build_is_recorded(self, client):
         c, holder = client
         pending = c.post("/api/plan", json={"request": "a place for files"}).json()
-        out = c.post("/api/apply", json={"id": pending["id"], "answer": "yes"}).json()
+        out = _apply_and_wait(c, pending["id"], "yes")
         assert out["change_id"]
         assert holder["instance"].history.entries()[0].request == "a place for files"
 
