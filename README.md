@@ -80,13 +80,39 @@ These are the parts that break in practice, and the parts this project is actual
 
 ## Status
 
-🚧 Early development.
+🚧 In development. The core loop works end to end against real Azure.
 
-- [ ] **Phase 1** — Read and describe an existing Azure account
-- [ ] **Phase 2** — Plain English → plan → approve → build
+- [x] **Phase 1** — Read and describe an existing Azure account
+- [x] **Phase 2** — Plain English → plan → approve → build
 - [ ] **Phase 3** — Cost preview, safety rules, deletion gate, failure recovery, drift detection
 - [ ] **Phase 4** — Multiple environments, change history, rollback, multi-step planning
 - [ ] **Phase 5** — Deploy Stratus itself to Azure
+
+```
+$ stratus build "a small website that can store uploaded files"
+
+  Looking at what you already have...
+  Working out what to build...
+  Checking what that would change...
+
+  Creating:
+    - place to keep files (website)
+    - folder (uploads)
+    - plus 2 supporting pieces needed to make that work
+
+  Nothing existing will be changed or deleted.
+
+  Go ahead?  [yes / no]
+> yes
+  Building it...
+  azurerm_storage_account.website: Still creating... [01m30s elapsed]
+
+Done.
+Your new website has been set up alongside a dedicated folder for
+storing uploaded files.
+```
+
+179 tests, none of which touch a network.
 
 ## Stack
 
