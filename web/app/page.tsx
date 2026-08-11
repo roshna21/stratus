@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, followJob, type PlanResponse } from "@/lib/api";
 import { Button, Card, ErrorNote, Label, LogView, Spinner } from "@/components/ui";
+import { WorkspaceField, useWorkspace } from "@/lib/workspace";
 
 const SUGGESTIONS = [
   "a private place to keep some files",
@@ -34,11 +35,9 @@ let nextKey = 1;
 export default function BuildPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  // One workspace holds one set of infrastructure, so asking for something
-  // new in a workspace that already has something replaces it. Without a way
-  // to choose, every request from here would target "default" and quietly
-  // propose destroying whatever was built before.
-  const [workspace, setWorkspace] = useState("default");
+  // Shared across pages, so History and Changes show the same workspace you
+  // just built in.
+  const [workspace, setWorkspace] = useWorkspace();
   const [busy, setBusy] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -175,15 +174,8 @@ export default function BuildPage() {
             Nothing is created until you approve it. Real resources, in your real Azure
             subscription.
           </span>
-          <span className="ml-auto flex items-center gap-2">
-            <label htmlFor="ws">Workspace</label>
-            <input
-              id="ws"
-              value={workspace}
-              onChange={(e) => setWorkspace(e.target.value.trim() || "default")}
-              disabled={!!busy}
-              className="w-32 rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-text outline-none focus:border-accent disabled:opacity-50"
-            />
+          <span className="ml-auto">
+            <WorkspaceField value={workspace} onChange={setWorkspace} disabled={!!busy} />
           </span>
         </div>
       </form>

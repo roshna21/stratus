@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { Button, Card, ErrorNote, Spinner } from "@/components/ui";
+import { WorkspaceField, useWorkspace } from "@/lib/workspace";
 
 export default function DriftPage() {
   const [result, setResult] = useState<{ has_drift: boolean; description: string } | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [workspace] = useState("default");
+  const [workspace, setWorkspace] = useWorkspace();
   const [loading, setLoading] = useState(false);
 
   // Not run on load, unlike the other pages: a drift check plans against the
@@ -34,7 +35,8 @@ export default function DriftPage() {
         editing it in the Azure portal, or a script.
       </p>
 
-      <div className="mt-5">
+      <div className="mt-5 flex items-center gap-4">
+        <WorkspaceField value={workspace} onChange={setWorkspace} disabled={loading} />
         <Button variant="primary" onClick={check} disabled={loading}>
           {loading ? "Checking…" : "Check now"}
         </Button>

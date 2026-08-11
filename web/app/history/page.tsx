@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { ApiError, api, type HistoryEntry } from "@/lib/api";
 import { Button, Card, Empty, ErrorNote, Spinner } from "@/components/ui";
+import { WorkspaceField, useWorkspace } from "@/lib/workspace";
 
 export default function HistoryPage() {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [workspace] = useState("default");
+  const [workspace, setWorkspace] = useWorkspace();
   const [loading, setLoading] = useState(true);
 
   const load = () => {
@@ -20,7 +21,8 @@ export default function HistoryPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // Reload when the workspace changes, or the page shows another one's data.
+  useEffect(load, [workspace]);
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10">
@@ -31,9 +33,12 @@ export default function HistoryPage() {
             Every change that reached your account, newest first.
           </p>
         </div>
-        <Button onClick={load} disabled={loading}>
-          Refresh
-        </Button>
+        <div className="flex items-center gap-4">
+          <WorkspaceField value={workspace} onChange={setWorkspace} disabled={loading} />
+          <Button onClick={load} disabled={loading}>
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {loading && <Spinner label="Loading…" />}
