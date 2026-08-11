@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Built by Stratus</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --line: #262b38;
+    --text: #e6e8ee; --dim: #9aa3b2; --accent: #6ea8fe; --ok: #7ec699;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f7f8fa; --panel:#fff; --line:#e3e6ec; --text:#1b1f27; --dim:#5f6875; --accent:#2563eb; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 40px 20px;
+  }
+  main { max-width: 640px; width: 100%; }
+  h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -.02em; }
+  .sub { color: var(--dim); margin: 0 0 32px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 22px; margin-bottom: 18px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; color: var(--dim); font-weight: 600;
+             text-transform: uppercase; letter-spacing: .06em; }
+  pre {
+    margin: 0; padding: 16px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6;
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
+    color: var(--ok); border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 13px; margin-bottom: 26px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 7px; }
+  a { color: var(--accent); }
+  footer { color: var(--dim); font-size: 13px; margin-top: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="badge"><span class="dot"></span> This page is served by infrastructure Stratus created</div>
+
+  <h1>Stratus</h1>
+  <p class="sub">Describe the infrastructure you need in plain English. An agent designs it, shows you exactly what would change and what it would cost, and builds it once you agree.</p>
+
+  <div class="card">
+    <h2>How this page got here</h2>
+    <pre>$ stratus build "a small website that can store uploaded files"
+
+  Looking at what you already have...
+  Working out what to build...
+  Checking what that would change...
+
+  Nothing here has a fixed monthly charge.
+
+  Creating:
+    - place to keep files (website)
+    - folder (uploads)
+    - plus 2 supporting pieces needed to make that work
+
+  Nothing existing will be changed or deleted.
+
+  Go ahead?  [yes / no]
+> yes
+
+Done.</pre>
+  </div>
+
+  <div class="card">
+    <h2>What it does that a code generator doesn't</h2>
+    <ul>
+      <li><strong>Reads the account first</strong> — so asking twice doesn't build twice.</li>
+      <li><strong>Prices the change</strong> — which things are free, which bill on usage, and which charge every hour.</li>
+      <li><strong>Refuses unsafe configurations</strong> — and sends them back to the model to be rewritten, so you see the safe version rather than an error.</li>
+      <li><strong>Requires the word DELETE</strong> before destroying anything.</li>
+      <li><strong>Recovers from half-finished builds</strong> — works out what survived, offers to finish or undo.</li>
+      <li><strong>Notices drift</strong> — when something changed in the cloud outside of it.</li>
+      <li><strong>Records every change</strong>, and can roll back to any of them.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Underneath</h2>
+    <p style="margin:0">Python, Terraform, and one language-model call — for turning an ambiguous sentence into a configuration. Everything else has exactly one correct answer, so it is ordinary code: instant, free, and identical every time.</p>
+  </div>
+
+  <footer>
+    <a href="https://github.com/roshna21/stratus">github.com/roshna21/stratus</a>
+  </footer>
+</main>
+</body>
+</html>

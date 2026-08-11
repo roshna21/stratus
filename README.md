@@ -37,6 +37,9 @@ storing uploaded files.
 
 There is a web interface too, with the same approval step.
 
+**[See a page it built](https://webr0bhza.z13.web.core.windows.net/)** — served from a
+storage account Stratus created, from exactly the request above.
+
 ---
 
 ## The problem
@@ -118,6 +121,9 @@ Web interface:
 ./.venv/bin/uvicorn stratus.web:app --port 8000
 # or:  docker build -t stratus . && docker run -p 8000:8000 --env-file .env stratus
 ```
+
+`render.yaml` deploys the container to a free host. Not Azure App Service —
+a free Azure subscription is given a quota of zero for it (see Limitations).
 
 ## Design decisions worth explaining
 

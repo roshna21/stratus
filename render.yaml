@@ -1,0 +1,20 @@
+# One-click deploy to Render's free tier.
+#
+# Render rather than Azure App Service because a free Azure subscription is
+# given an App Service quota of zero — see the Limitations section of the
+# README. Fly.io works the same way from the Dockerfile.
+services:
+  - type: web
+    name: stratus
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      # Set these in the Render dashboard, not here. A subscription id is
+      # not a secret but it identifies an account, and an API key certainly
+      # is; neither belongs in a file that is committed.
+      - key: AZURE_SUBSCRIPTION_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
