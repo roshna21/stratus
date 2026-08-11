@@ -125,6 +125,21 @@ class TerraformRunner:
         """
         self._run(["init", "-input=false", "-no-color"], INIT_TIMEOUT)
 
+    def validate(self) -> None:
+        """Check the configuration is syntactically valid and self-consistent.
+
+        Cheap and offline — it never contacts Azure. That makes it the right
+        first gate on generated configuration: a language model will sometimes
+        produce Terraform that does not parse, or that references an argument
+        the provider does not have, and catching that here costs nothing.
+        Letting it reach `plan` instead means a slow round trip to Azure to
+        learn the same thing.
+
+        Raises TerraformError carrying Terraform's own message, which is
+        specific enough to hand straight back to the model for a repair.
+        """
+        self._run(["validate", "-no-color"], PLAN_TIMEOUT)
+
     def plan(self) -> Plan:
         """Work out what would change, and save that decision to a file.
 

@@ -1,3 +1,6 @@
+# The reasoning layer
+anthropic>=0.69
+
 # Data models and validation
 pydantic>=2.9
 
