@@ -184,39 +184,60 @@ def cmd_drift(args, parser) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="stratus",
-        description="Describe the infrastructure you need in plain English.",
-    )
-    parser.add_argument(
+    # Shared options are attached to the top level *and* to every subcommand,
+    # so `stratus --workspace x build "..."` and
+    # `stratus build "..." --workspace x` both work. People write it the
+    # second way, and argparse only accepts the first unless told otherwise.
+    #
+    # The defaults are SUPPRESS rather than real values: with a real default
+    # the subcommand's copy overwrites whatever was given at the top level,
+    # so the option would silently do nothing in the first form.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--subscription",
         metavar="ID",
-        default=os.getenv("AZURE_SUBSCRIPTION_ID"),
+        default=argparse.SUPPRESS,
         help="Azure subscription id (defaults to AZURE_SUBSCRIPTION_ID from .env)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--workspace",
-        default="default",
+        default=argparse.SUPPRESS,
         help="which set of infrastructure to work on (default: 'default')",
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="stratus",
+        parents=[common],
+        description="Describe the infrastructure you need in plain English.",
     )
 
     sub = parser.add_subparsers(dest="command")
 
-    show = sub.add_parser("show", help="describe what's in the account")
+    show = sub.add_parser("show", parents=[common], help="describe what's in the account")
     show.add_argument(
         "--live",
         action="store_true",
         help="read real Azure instead of the built-in demo account",
     )
 
-    build = sub.add_parser("build", help="build something from a description")
+    build = sub.add_parser(
+        "build", parents=[common], help="build something from a description"
+    )
     build.add_argument("request", help='what you need, e.g. "a website with a database"')
 
-    sub.add_parser("destroy", help="tear down everything in a workspace")
+    sub.add_parser("destroy", parents=[common], help="tear down everything in a workspace")
 
-    sub.add_parser("drift", help="check whether anything changed outside Stratus")
+    sub.add_parser(
+        "drift", parents=[common], help="check whether anything changed outside Stratus"
+    )
 
     args = parser.parse_args(argv)
+
+    # Fill in what neither position supplied.
+    if not getattr(args, "subscription", None):
+        args.subscription = os.getenv("AZURE_SUBSCRIPTION_ID")
+    if not getattr(args, "workspace", None):
+        args.workspace = "default"
 
     if args.command == "build":
         return cmd_build(args, parser)
