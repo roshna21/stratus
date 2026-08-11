@@ -19,10 +19,19 @@ from pydantic import BaseModel
 
 from stratus.agent.providers.base import ProviderResponse, TokenUsage
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-"""Flash rather than Pro: faster, and its free-tier allowance is far larger.
-For generating a few dozen lines of Terraform the extra capability of Pro is
-not the bottleneck — the prompt is.
+DEFAULT_MODEL = "gemini-flash-latest"
+"""An alias that tracks whatever the current Flash model is.
+
+Pinning a dated version — `gemini-2.5-flash`, say — looks more reproducible
+and is worse in practice: Google retires older models for new accounts, and
+the request then fails with a 404 that reads like the key is broken. This
+project is meant to still run when someone clones it in six months, and an
+alias is what makes that true.
+
+Flash rather than Pro: faster, and its free-tier allowance is far larger. For
+a few dozen lines of Terraform the prompt is the bottleneck, not the model.
+
+Override with GEMINI_MODEL to compare against something else.
 """
 
 
@@ -38,10 +47,10 @@ class GeminiProvider:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         client: Any | None = None,
     ) -> None:
-        self.model = model
+        self.model = model or os.getenv("GEMINI_MODEL") or DEFAULT_MODEL
 
         if client is not None:
             self._client = client
@@ -69,18 +78,21 @@ class GeminiProvider:
     ) -> ProviderResponse:
         from google.genai import types
 
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=[_to_gemini(m) for m in messages],
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                # Gemini accepts a Pydantic class directly and returns an
-                # instance of it, so there is no hand-written JSON schema to
-                # keep in step with the model definition.
-                response_mime_type="application/json",
-                response_schema=schema,
-            ),
-        )
+        try:
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=[_to_gemini(m) for m in messages],
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    # Gemini accepts a Pydantic class directly and returns an
+                    # instance of it, so there is no hand-written JSON schema
+                    # to keep in step with the model definition.
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised with better context
+            raise self._explain(exc) from exc
 
         return ProviderResponse(
             parsed=_parsed(response, schema),
@@ -95,6 +107,47 @@ class GeminiProvider:
         showing a number implies money is moving, and none is.
         """
         return 0.0
+
+    def available_models(self) -> list[str]:
+        """Model names this key may actually use.
+
+        Which models a key can reach depends on when the account was created,
+        so this can only be answered by asking.
+        """
+        names = []
+        for model in self._client.models.list():
+            if "generateContent" in (getattr(model, "supported_actions", None) or []):
+                names.append(model.name.removeprefix("models/"))
+        return names
+
+    def _explain(self, exc: Exception) -> Exception:
+        """Turn Gemini's less helpful errors into actionable ones."""
+        text = str(exc)
+
+        if "429" in text or "RESOURCE_EXHAUSTED" in text:
+            return RateLimited(
+                f"{self.name} free-tier limit reached.\n\n"
+                "Allowances reset per minute and per day. Wait a minute and "
+                "retry, or switch provider for now:\n"
+                "    STRATUS_MODEL_PROVIDER=anthropic"
+            )
+
+        if "404" in text and "NOT_FOUND" in text:
+            # Google retires models for new accounts, and the resulting 404
+            # reads like a broken key. Say what is actually usable.
+            try:
+                usable = ", ".join(self.available_models()[:8])
+            except Exception:  # noqa: BLE001 - best effort inside an error path
+                usable = "(could not list them)"
+            return RuntimeError(
+                f"Model {self.model!r} is not available to this API key.\n\n"
+                "Google retires models for newly created accounts, so a name "
+                "from a tutorial may no longer work.\n\n"
+                f"Available to you: {usable}\n\n"
+                "Set GEMINI_MODEL in .env to pick one."
+            )
+
+        return exc
 
 
 def _to_gemini(message: dict[str, Any]) -> dict[str, Any]:
