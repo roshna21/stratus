@@ -44,16 +44,31 @@ LOCK_ID = re.compile(r"^\s*ID:\s*([0-9a-f-]{36})", re.MULTILINE)
 CAPACITY_SIGNS = (
     "GatewayTimeout",
     "RequestDisallowedByAzure",
-    "SubscriptionIsOverQuotaForSku",
     "not accepting new customers",
     "There are no available instances",
 )
 """What Azure says when a region has no room for you.
 
-None of these mention capacity. They surface as timeouts, quota errors, or
-flat refusals, and on a free subscription they are common enough to be worth
-recognising by name rather than leaving the user to interpret.
+None of these mention capacity. They surface as timeouts or flat refusals,
+and on a free subscription they are common enough to be worth recognising by
+name rather than leaving the user to interpret.
 """
+
+QUOTA_SIGNS = (
+    "without additional quota",
+    "SubscriptionIsOverQuotaForSku",
+    "Current Limit (Total VMs): 0",
+    "quota limit",
+)
+"""What Azure says when your account is not *allowed* the resource at all.
+
+Different from capacity, and the distinction matters: capacity clears if you
+move region or wait, a quota of zero does neither. Free subscriptions get an
+App Service quota of zero, so no region will ever accept one — and Azure
+reports that as `401 Unauthorized`, which sounds like a login problem.
+"""
+
+QUOTA_DETAIL = re.compile(r"Current Limit \(([^)]+)\): (\d+)")
 
 
 class TerraformError(RuntimeError):
@@ -132,6 +147,43 @@ class CapacityUnavailable(TerraformError):
         )
 
 
+class QuotaBlocked(TerraformError):
+    """The account is not permitted this kind of resource at all.
+
+    Distinct from CapacityUnavailable on purpose. Capacity clears if you move
+    region or come back tomorrow; a quota of zero does neither, and telling
+    someone to try another region when their limit is zero everywhere just
+    wastes their afternoon.
+    """
+
+    def __init__(self, base: TerraformError):
+        text = base.stdout + base.stderr
+        match = QUOTA_DETAIL.search(text)
+        self.quota_name = match.group(1) if match else "the required quota"
+        self.quota_limit = match.group(2) if match else "0"
+        super().__init__(base.command, base.returncode, base.stdout, base.stderr)
+
+    def __str__(self) -> str:
+        return (
+            "Your Azure subscription is not allowed to create this.\n\n"
+            f"Azure reports your limit for {self.quota_name} as "
+            f"{self.quota_limit}. This is an account-level restriction, not a "
+            "shortage — free and trial subscriptions get a quota of zero for "
+            "some services, App Service being the usual one. Changing region "
+            "will not help, because the limit applies everywhere.\n\n"
+            "Three ways forward:\n\n"
+            "  1. Ask for something that does not need that quota. Websites "
+            "can be served from storage or from Static Web Apps, neither of "
+            "which counts against it.\n"
+            "  2. Request a quota increase in the Azure portal:\n"
+            "     Subscriptions -> Usage + quotas -> Request increase\n"
+            "  3. Upgrade to pay-as-you-go. Your credit still applies, and "
+            "quotas are raised.\n\n"
+            "Azure reported this as 401 Unauthorized, which sounds like a "
+            "login problem. It is not — you are signed in correctly."
+        )
+
+
 def _extract_lock_id(text: str) -> str | None:
     match = LOCK_ID.search(text)
     return match.group(1) if match else None
@@ -139,6 +191,10 @@ def _extract_lock_id(text: str) -> str | None:
 
 def _looks_like_capacity(text: str) -> bool:
     return any(sign in text for sign in CAPACITY_SIGNS)
+
+
+def _looks_like_quota(text: str) -> bool:
+    return any(sign in text for sign in QUOTA_SIGNS)
 
 
 class TerraformRunner:
@@ -250,6 +306,11 @@ class TerraformRunner:
 
         if "Error acquiring the state lock" in text or "state blob is already locked" in text:
             return StateLocked(error, self.workdir)
+        # Quota before capacity: a quota message often also contains words
+        # that look like capacity, and sending someone region-hopping when
+        # their limit is zero everywhere wastes their time.
+        if _looks_like_quota(text):
+            return QuotaBlocked(error)
         if _looks_like_capacity(text):
             return CapacityUnavailable(error)
         return error

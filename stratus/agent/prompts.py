@@ -58,6 +58,24 @@ money continuously and are the classic way a free-tier account starts billing:
 NAT gateways, application gateways, load balancers, static public IP addresses
 that are not attached to anything, and any premium SKU.
 
+**Avoid anything that consumes virtual machine quota.** Free and trial
+subscriptions are given a quota of zero for it, so these fail outright —
+in every region, with a `401 Unauthorized` that has nothing to do with
+being signed in. That rules out `azurerm_service_plan` and therefore
+`azurerm_linux_web_app` and `azurerm_windows_web_app`, along with
+`azurerm_linux_virtual_machine` and `azurerm_windows_virtual_machine`.
+
+For a website, reach for one of these instead:
+
+- `azurerm_static_web_app` on the `Free` tier — the best fit for a site
+  with a front end, and it needs no quota.
+- A storage account with `static_website` enabled — the simplest possible
+  option when all that is wanted is pages served over HTTP.
+
+Use a virtual machine or an App Service plan only when the person explicitly
+asks for one, and say in your assumptions that it may be refused on a free
+subscription.
+
 **Never put a secret in the configuration.** No passwords, keys, or connection
 strings as literal values. Use `random_password` where a password is required,
 and mark the output `sensitive = true`.

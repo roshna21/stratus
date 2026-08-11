@@ -16,10 +16,12 @@ from stratus.models import Snapshot
 from stratus.pipeline import _progress_filter
 from stratus.terraform.runner import (
     CapacityUnavailable,
+    QuotaBlocked,
     StateLocked,
     TerraformError,
     _extract_lock_id,
     _looks_like_capacity,
+    _looks_like_quota,
 )
 
 # Verbatim from the run that produced it.
@@ -92,12 +94,16 @@ class TestCapacity:
         [
             GATEWAY_TIMEOUT,
             REGION_REFUSED,
-            "SubscriptionIsOverQuotaForSku",
             "There are no available instances in this region",
         ],
     )
     def test_recognises_the_phrasings(self, text):
         assert _looks_like_capacity(text)
+
+    def test_an_sku_quota_message_is_quota_not_capacity(self):
+        # Reads like capacity, is not. Moving region will not fix a quota.
+        assert _looks_like_quota("SubscriptionIsOverQuotaForSku")
+        assert not _looks_like_capacity("SubscriptionIsOverQuotaForSku")
 
     def test_does_not_cry_wolf_on_ordinary_errors(self):
         assert not _looks_like_capacity("Error: Unsupported argument on line 12")
@@ -114,6 +120,60 @@ class TestCapacity:
     def test_it_explains_that_this_is_not_the_user_s_fault(self):
         message = str(CapacityUnavailable(_error(GATEWAY_TIMEOUT)))
         assert "capacity" in message.lower()
+
+
+QUOTA_REFUSED = (
+    'unexpected status 401 (401 Unauthorized) with response: {"Code":'
+    '"Unauthorized","Message":"Operation cannot be completed without '
+    "additional quota. \\r\\nAdditional details - Location:  \\r\\nCurrent "
+    'Limit (Total VMs): 0 \\r\\nCurrent Usage: 0"}'
+)
+
+
+class TestQuota:
+    """A free subscription gets an App Service quota of zero. It is reported
+    as 401 Unauthorized, which sounds like a login problem and is not."""
+
+    def test_recognises_the_quota_message(self):
+        assert _looks_like_quota(QUOTA_REFUSED)
+
+    def test_quota_is_not_mistaken_for_capacity(self):
+        # The distinction matters: capacity clears if you move region, a
+        # quota of zero does not. Sending someone region-hopping when their
+        # limit is zero everywhere wastes their afternoon.
+        error = QuotaBlocked(_error(QUOTA_REFUSED))
+        assert "Changing region will not help" in str(error)
+
+    def test_it_reads_the_actual_limit_out(self):
+        error = QuotaBlocked(_error(QUOTA_REFUSED))
+        assert error.quota_name == "Total VMs"
+        assert error.quota_limit == "0"
+
+    def test_it_offers_a_way_forward_that_works_today(self):
+        # A quota increase takes days. Something buildable now matters more.
+        message = str(QuotaBlocked(_error(QUOTA_REFUSED)))
+        assert "storage" in message.lower()
+        assert "Static Web Apps" in message
+
+    def test_it_says_the_401_is_not_a_login_problem(self):
+        message = str(QuotaBlocked(_error(QUOTA_REFUSED)))
+        assert "not" in message and "signed in correctly" in message
+
+
+class TestPromptAvoidsBlockedServices:
+    """The model should not generate something the account cannot create."""
+
+    def test_it_is_told_to_avoid_app_service_plans(self):
+        from stratus.agent.prompts import SYSTEM_PROMPT
+
+        assert "azurerm_service_plan" in SYSTEM_PROMPT
+        assert "quota" in SYSTEM_PROMPT.lower()
+
+    def test_it_is_given_alternatives_for_a_website(self):
+        from stratus.agent.prompts import SYSTEM_PROMPT
+
+        assert "azurerm_static_web_app" in SYSTEM_PROMPT
+        assert "static_website" in SYSTEM_PROMPT
 
 
 class TestRegionChoice:
