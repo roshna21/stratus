@@ -35,7 +35,9 @@ Your new website has been set up alongside a dedicated folder for
 storing uploaded files.
 ```
 
-There is a web interface too, with the same approval step.
+There is a web interface with the same approval step — describe and build,
+see what is in the account, review what has been built before, and check what
+has changed outside Stratus.
 
 **[See a page it built](https://webr0bhza.z13.web.core.windows.net/)** — served from a
 storage account Stratus created, from exactly the request above.
@@ -115,11 +117,17 @@ cp .env.example .env      # then fill in AZURE_SUBSCRIPTION_ID and GEMINI_API_KE
 ./.venv/bin/python -m stratus destroy
 ```
 
-Web interface:
+Web interface — two processes in development, the API and the front end:
 
 ```bash
-./.venv/bin/uvicorn stratus.web:app --port 8000
-# or:  docker build -t stratus . && docker run -p 8000:8000 --env-file .env stratus
+./.venv/bin/uvicorn stratus.web:app --port 8000     # the API
+cd web && npm install && npm run dev                # the interface, on :3000
+```
+
+Or the whole thing in one container:
+
+```bash
+docker build -t stratus . && docker run -p 8000:8000 --env-file .env stratus
 ```
 
 `render.yaml` deploys the container to a free host. Not Azure App Service —
@@ -135,6 +143,15 @@ a free Azure subscription is given a quota of zero for it (see Limitations).
 
 **Cost never reports zero when the answer is unknown.** A resource that cannot be priced is reported as unknown, out loud, and never folded into the total as free.
 
+**The browser never re-plans between describing and approving.** A build takes
+minutes, so an apply starts a job and the page polls it — but the job runs the
+plan file that was saved when the change was described. Polling rather than a
+server-sent stream: Terraform emits a line every ten seconds so a one-second
+poll is barely behind, and polling survives a dropped connection, a sleeping
+laptop and a buffering proxy. The failure mode of polling is a late update;
+the failure mode of a broken stream is a page that looks finished when it is
+not.
+
 **Recovery costs no cloud calls.** Stratus planned the work, so it knows what should exist; Terraform's state says what does. The difference is the answer — and calling Azure could fail for the same reason the build did.
 
 ## Limitations
@@ -145,7 +162,11 @@ a free Azure subscription is given a quota of zero for it (see Limitations).
 
 **Free subscriptions cannot create App Service.** Their quota for it is zero, and Azure reports that as `401 Unauthorized`. Stratus recognises this and steers to storage-hosted static sites instead.
 
-**No authentication on the web interface.** It is a demonstration. Do not expose it to the internet as-is.
+**No authentication on the web interface.** It is a demonstration. Do not
+expose it to the internet as-is.
+
+**Rollback is command-line only.** It can destroy things, and the terminal
+asks properly. The browser lists history but will not undo from it.
 
 ## Stack
 
@@ -157,7 +178,7 @@ a free Azure subscription is given a quota of zero for it (see Limitations).
 | Cloud | Microsoft Azure |
 | State | Azure Storage, with locking |
 | Pricing | Azure Retail Prices API (public, no key) |
-| Interface | Command line, and a single-file web page |
+| Interface | Command line, and a Next.js 16 / React 19 / Tailwind 4 front end |
 
 ## Tests
 
