@@ -2,6 +2,9 @@
 google-genai>=1.0        # default: free tier, no card needed
 anthropic>=0.69          # optional: paid
 
+# Reaching the public Azure price list (no account or key required)
+httpx>=0.27
+
 # Data models and validation
 pydantic>=2.9
 

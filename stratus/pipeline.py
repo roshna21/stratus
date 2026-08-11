@@ -24,6 +24,7 @@ from stratus.agent import GeneratedConfig, TerraformGenerator
 from stratus.agent.prompts import DEFAULT_REGION
 from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
+from stratus.cost import Estimate, describe as describe_cost, estimate as estimate_cost
 from stratus.explain import confirmation_is_valid, explain
 from stratus.models import Plan, Snapshot
 from stratus.policy import Review, describe_warnings, explain_block, review
@@ -69,6 +70,9 @@ class Outcome:
     """The safety review of the approved plan. Blocked plans never reach
     here — they are corrected before the user sees anything — so this holds
     warnings only."""
+
+    cost: Estimate | None = None
+    """What the plan would add to the monthly bill."""
 
 
 class Stratus:
@@ -163,9 +167,17 @@ class Stratus:
         # printed earlier. They are things the user should weigh before
         # answering, and anything shown before the plan gets skimmed past.
         question = explain(plan)
+
+        # Cost first, then warnings, then the plan. Money is the thing a
+        # person on a free tier most needs to see, and the further down the
+        # screen it sits the more likely it is skimmed.
+        outcome.cost = estimate_cost(plan, region=self.region)
+        cost_text = describe_cost(outcome.cost)
         warnings = describe_warnings(self._last_review) if self._last_review else ""
-        if warnings:
-            question = f"{warnings}\n\n{question}"
+
+        for block in (warnings, cost_text):
+            if block:
+                question = f"{block}\n\n{question}"
 
         answer = confirm(question)
         if not confirmation_is_valid(plan, answer):
