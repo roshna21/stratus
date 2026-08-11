@@ -26,6 +26,7 @@ from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
 from stratus.explain import confirmation_is_valid, explain
 from stratus.models import Plan, Snapshot
+from stratus.policy import Review, describe_warnings, explain_block, review
 from stratus.recovery import PartialBuild, assess, explain_partial, parse_choice
 from stratus.terraform import TerraformError, TerraformRunner
 
@@ -63,6 +64,11 @@ class Outcome:
     error: Exception | None = None
     """The failure itself, kept so the caller can show what the cloud said
     rather than only our interpretation of it."""
+
+    review: Review | None = None
+    """The safety review of the approved plan. Blocked plans never reach
+    here — they are corrected before the user sees anything — so this holds
+    warnings only."""
 
 
 class Stratus:
@@ -105,6 +111,11 @@ class Stratus:
             f"{workspace}.tfstate"
         )
 
+        # Filled in by _validate, which plans and reviews as part of deciding
+        # whether a configuration is acceptable.
+        self._last_plan: Plan | None = None
+        self._last_review: Review | None = None
+
     def build(
         self,
         request: str,
@@ -132,9 +143,14 @@ class Stratus:
         outcome.repairs_used = self.generator.repairs_used
         outcome.cost_usd = self.generator.cost
 
-        on_progress("Checking what that would change...")
-        plan = self.runner.plan()
+        # The plan and the safety review already happened inside _validate,
+        # as part of deciding whether the configuration was acceptable at all.
+        # Planning again here would be a second slow round trip to Azure for
+        # an answer already held.
+        plan = self._last_plan
+        assert plan is not None
         outcome.plan = plan
+        outcome.review = self._last_review
 
         if plan.is_empty:
             # Reading the account first is what makes this possible: the
@@ -143,7 +159,15 @@ class Stratus:
             outcome.cancelled_reason = "nothing to do"
             return outcome
 
-        answer = confirm(explain(plan))
+        # Warnings ride along with the approval question rather than being
+        # printed earlier. They are things the user should weigh before
+        # answering, and anything shown before the plan gets skimmed past.
+        question = explain(plan)
+        warnings = describe_warnings(self._last_review) if self._last_review else ""
+        if warnings:
+            question = f"{warnings}\n\n{question}"
+
+        answer = confirm(question)
         if not confirmation_is_valid(plan, answer):
             outcome.cancelled_reason = "not approved"
             return outcome
@@ -243,7 +267,16 @@ class Stratus:
         return outcome
 
     def _validate(self, files: dict[str, str]) -> None:
-        """Write the generated configuration out and check Terraform accepts it.
+        """Decide whether a generated configuration is acceptable.
+
+        Three gates, cheapest first: does it parse, what would it actually do,
+        and is what it would do safe.
+
+        Putting the safety review here rather than after the plan is what
+        makes it self-correcting. This function is the generator's validation
+        callback, so anything it rejects goes straight back to the model with
+        the reason attached — a configuration that would expose data gets
+        rewritten rather than shown to the user as a refusal.
 
         The backend is written here rather than by the model. It is the same
         for every request, the model has no business knowing where state
@@ -253,8 +286,26 @@ class Stratus:
         self.runner.write_config("backend.tf", self.backend.to_hcl())
         for name, contents in files.items():
             self.runner.write_config(name, contents)
+
         self.runner.init()
         self.runner.validate()
+
+        plan = self.runner.plan()
+        self._last_plan = plan
+        self._last_review = review(plan)
+
+        if self._last_review.is_blocked:
+            raise PolicyRefused(explain_block(self._last_review))
+
+
+class PolicyRefused(RuntimeError):
+    """The configuration would do something Stratus will not do.
+
+    Raised from the validation callback so the generator treats it exactly
+    like a syntax error: feed the reason back, ask for a correction, try
+    again. There is deliberately no way for a user to override it — a safety
+    gate with a bypass is a suggestion.
+    """
 
 
 def _progress_filter(on_progress: Callable[[str], None]) -> Callable[[str], None]:

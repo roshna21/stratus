@@ -41,17 +41,28 @@ def _stratus(plan: Plan, tmp_path) -> Stratus:
     reader = MagicMock()
     reader.read.return_value = Snapshot(subscription_id="test-sub")
 
-    generator = MagicMock()
-    generator.generate.return_value = GeneratedConfig(
+    config = GeneratedConfig(
         files=[GeneratedFile(filename="main.tf", contents="resource {}")],
         summary="A thing.",
     )
-    generator.repairs_used = 0
-    generator.cost = 0.0
 
     runner = MagicMock()
     runner.plan.return_value = plan
     runner.state_resources.return_value = []
+
+    generator = MagicMock()
+    generator.repairs_used = 0
+    generator.cost = 0.0
+
+    def generate(request, existing, validate=None, region=None):
+        # Call the validation callback, as the real generator does. That is
+        # where planning and the safety review happen, so a mock that skips
+        # it would leave the pipeline testing a path that cannot occur.
+        if validate is not None:
+            validate(config.as_dict())
+        return config
+
+    generator.generate.side_effect = generate
 
     return Stratus(
         "test-sub",
@@ -311,3 +322,59 @@ class TestReporting:
         steps = []
         s.build("x", confirm=lambda _: "yes", on_progress=steps.append)
         assert len(steps) >= 3
+
+
+class TestSafetyRules:
+    """A configuration that would expose data never reaches the user."""
+
+    def test_a_blocked_plan_is_sent_back_to_be_rewritten(self, tmp_path):
+        # The user should never see "I refuse to build that". They should see
+        # the corrected thing. Policy runs inside the validation callback, so
+        # the generator's repair loop handles it exactly like a syntax error.
+        from stratus.pipeline import PolicyRefused, Stratus
+
+        dangerous = _plan(Action.CREATE)
+        dangerous.changes[0].type = "azurerm_storage_container"
+        dangerous.changes[0].after = {"container_access_type": "blob", "name": "leaky"}
+
+        s = _stratus(dangerous, tmp_path)
+        with pytest.raises(PolicyRefused, match="read the files"):
+            s._validate({"main.tf": "whatever"})
+
+    def test_a_safe_plan_passes_validation(self, tmp_path):
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s._validate({"main.tf": "whatever"})  # must not raise
+        assert s._last_plan is not None
+        assert not s._last_review.is_blocked
+
+    def test_the_refusal_tells_the_model_what_to_do(self, tmp_path):
+        from stratus.pipeline import PolicyRefused
+
+        dangerous = _plan(Action.CREATE)
+        dangerous.changes[0].type = "azurerm_nat_gateway"
+        dangerous.changes[0].after = {"name": "gw"}
+
+        s = _stratus(dangerous, tmp_path)
+        with pytest.raises(PolicyRefused) as caught:
+            s._validate({"main.tf": "whatever"})
+        assert "Instead:" in str(caught.value)
+
+    def test_warnings_reach_the_approval_screen(self, tmp_path):
+        # Warnings are things to weigh before answering, so they belong with
+        # the question, not printed earlier where they get skimmed past.
+        warned = _plan(Action.CREATE)
+        warned.changes[0].type = "azurerm_service_plan"
+        warned.changes[0].after = {"sku_name": "P1v3", "name": "plan"}
+
+        s = _stratus(warned, tmp_path)
+        answers = _Answers("yes")
+        s.build("x", confirm=answers)
+        assert "Worth knowing" in answers.asked[0]
+        assert "paid size" in answers.asked[0]
+
+    def test_plans_only_once(self, tmp_path):
+        # Planning happens inside validation. Doing it again in build() would
+        # be a second slow round trip to Azure for an answer already held.
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.build("x", confirm=_Answers("yes"))
+        assert s.runner.plan.call_count == 1
