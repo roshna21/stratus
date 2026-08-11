@@ -26,7 +26,8 @@ from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
 from stratus.explain import confirmation_is_valid, explain
 from stratus.models import Plan, Snapshot
-from stratus.terraform import TerraformRunner
+from stratus.recovery import PartialBuild, assess, explain_partial, parse_choice
+from stratus.terraform import TerraformError, TerraformRunner
 
 WORKSPACE_ROOT = Path.home() / ".stratus" / "workspaces"
 """Where each set of infrastructure keeps its files.
@@ -51,6 +52,17 @@ class Outcome:
     cost_usd: float = 0.0
     existing_before: Snapshot | None = None
     notes: list[str] = field(default_factory=list)
+
+    partial: PartialBuild | None = None
+    """Set when the build died partway and left resources behind."""
+
+    recovery: str | None = None
+    """What was done about that: 'finished', 'undone', 'finish failed', or
+    'left as is'."""
+
+    error: Exception | None = None
+    """The failure itself, kept so the caller can show what the cloud said
+    rather than only our interpretation of it."""
 
 
 class Stratus:
@@ -141,10 +153,64 @@ class Stratus:
         # Progress is streamed rather than collected. Terraform prints a line
         # every ten seconds while a resource is being created, and those lines
         # are the only way to tell slow progress from a stuck retry loop.
-        self.runner.apply(on_line=_progress_filter(on_progress))
-        outcome.applied = True
+        try:
+            self.runner.apply(on_line=_progress_filter(on_progress))
+        except TerraformError as exc:
+            # A build that dies partway leaves real resources behind. Raising
+            # here would hand the user an error and abandon them holding
+            # infrastructure they did not ask to keep, so instead work out
+            # what survived and offer a way out.
+            outcome.partial = assess(
+                plan, self.runner.state_resources(), reason=str(exc)
+            )
+            outcome.error = exc
 
+            if outcome.partial.is_clean_failure:
+                outcome.cancelled_reason = "failed, nothing left behind"
+                return outcome
+
+            self._recover(outcome, confirm, on_progress)
+            return outcome
+
+        outcome.applied = True
         return outcome
+
+    def _recover(
+        self,
+        outcome: Outcome,
+        confirm: Callable[[str], str],
+        on_progress: Callable[[str], None],
+    ) -> None:
+        """Offer to finish or undo a half-built set of infrastructure."""
+        assert outcome.partial is not None
+        choice = parse_choice(confirm(explain_partial(outcome.partial)))
+
+        if choice == "finish":
+            on_progress("Trying the rest again...")
+            # Re-plan first. The world moved when the first attempt partly
+            # succeeded, so the saved plan no longer describes reality — and
+            # applying a stale plan is how you get duplicates.
+            self.runner.plan()
+            try:
+                self.runner.apply(on_line=_progress_filter(on_progress))
+                outcome.applied = True
+                outcome.recovery = "finished"
+            except TerraformError as exc:
+                # Do not loop. A second identical failure means the cause is
+                # not transient, and asking again just wears the user down.
+                outcome.recovery = "finish failed"
+                outcome.error = exc
+            return
+
+        if choice == "undo":
+            on_progress("Removing what was made...")
+            self.runner.destroy(on_line=_progress_filter(on_progress))
+            outcome.recovery = "undone"
+            return
+
+        # Anything unrecognised leaves the half-built state alone. That is
+        # recoverable; guessing could delete something they wanted to keep.
+        outcome.recovery = "left as is"
 
     def destroy(
         self,

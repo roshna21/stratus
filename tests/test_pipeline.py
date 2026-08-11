@@ -190,6 +190,113 @@ class TestDestroy:
         s.runner.destroy.assert_not_called()
 
 
+class _Answers:
+    """Answers a sequence of questions, and remembers what it was asked.
+
+    One callback serves both the plan approval and the recovery choice, so a
+    test has to say "yes" first and only then choose. Returning the recovery
+    answer to the approval question cancels the build before it ever runs.
+    """
+
+    def __init__(self, *answers: str):
+        self._answers = list(answers)
+        self.asked: list[str] = []
+
+    def __call__(self, text: str) -> str:
+        self.asked.append(text)
+        return self._answers.pop(0) if self._answers else ""
+
+
+class TestPartialFailure:
+    """A build that dies partway must not leave the user holding the pieces."""
+
+    def _failing(self, tmp_path, survived: list[str], apply_effect=None):
+        from stratus.terraform import TerraformError
+
+        s = _stratus(_plan(Action.CREATE, Action.CREATE), tmp_path)
+        s.runner.plan.return_value = _plan(Action.CREATE, Action.CREATE)
+        s.runner.state_resources.return_value = survived
+        s.runner.apply.side_effect = apply_effect or TerraformError(
+            ["terraform", "apply"], 1, "", "quota exceeded"
+        )
+        return s
+
+    def test_does_not_raise_at_the_user(self, tmp_path):
+        # Raising would hand them an error and abandon them holding
+        # infrastructure they did not ask to keep.
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        outcome = s.build("x", confirm=_Answers("yes", "undo"))
+        assert outcome.partial is not None
+
+    def test_works_out_what_survived(self, tmp_path):
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        outcome = s.build("x", confirm=_Answers("yes", "undo"))
+        assert outcome.partial.created == ["azurerm_storage_account.r0"]
+        assert outcome.partial.missing == ["azurerm_storage_account.r1"]
+
+    def test_offers_a_choice_and_undoes_when_asked(self, tmp_path):
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        outcome = s.build("x", confirm=_Answers("yes", "undo"))
+        assert outcome.recovery == "undone"
+        s.runner.destroy.assert_called_once()
+
+    def test_replans_before_finishing(self, tmp_path):
+        # The world moved when the first attempt partly succeeded, so the
+        # saved plan no longer describes reality. Applying it stale is how
+        # you get duplicates.
+        from stratus.terraform import TerraformError
+
+        s = self._failing(
+            tmp_path,
+            ["azurerm_storage_account.r0"],
+            apply_effect=[
+                TerraformError(["terraform", "apply"], 1, "", "transient"),
+                "ok",
+            ],
+        )
+        outcome = s.build("x", confirm=_Answers("yes", "finish"))
+        assert outcome.recovery == "finished"
+        assert outcome.applied
+        assert s.runner.plan.call_count == 2
+
+    def test_does_not_loop_when_finishing_fails_again(self, tmp_path):
+        # A second identical failure means the cause is not transient.
+        # Asking again just wears the user down.
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        answers = _Answers("yes", "finish")
+        outcome = s.build("x", confirm=answers)
+        assert outcome.recovery == "finish failed"
+        assert len(answers.asked) == 2  # the plan approval, then the choice
+
+    def test_an_unrecognised_answer_changes_nothing(self, tmp_path):
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        outcome = s.build("x", confirm=_Answers("yes", "erm"))
+        assert outcome.recovery == "left as is"
+        s.runner.destroy.assert_not_called()
+
+    def test_a_failure_before_anything_was_made_asks_nothing(self, tmp_path):
+        # Nothing survived, so there is nothing to recover.
+        s = self._failing(tmp_path, [])
+        answers = _Answers("yes", "undo")
+        outcome = s.build("x", confirm=answers)
+        assert outcome.cancelled_reason == "failed, nothing left behind"
+        assert len(answers.asked) == 1  # only the plan approval
+        s.runner.destroy.assert_not_called()
+
+    def test_keeps_what_the_cloud_said(self, tmp_path):
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        outcome = s.build("x", confirm=_Answers("yes", "undo"))
+        assert "quota exceeded" in str(outcome.error)
+
+    def test_the_recovery_question_describes_the_damage(self, tmp_path):
+        s = self._failing(tmp_path, ["azurerm_storage_account.r0"])
+        answers = _Answers("yes", "undo")
+        s.build("x", confirm=answers)
+        recovery_question = answers.asked[1]
+        assert "stopped partway" in recovery_question
+        assert "costing you money" in recovery_question
+
+
 class TestReporting:
     def test_carries_the_cost_and_repair_count(self, tmp_path):
         s = _stratus(_plan(Action.CREATE), tmp_path)

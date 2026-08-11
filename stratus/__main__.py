@@ -94,6 +94,26 @@ def cmd_build(args, parser) -> int:
         print("You already have everything you asked for. Nothing was changed.")
     elif outcome.cancelled_reason == "not approved":
         print("Cancelled. Nothing was created or changed.")
+    elif outcome.cancelled_reason == "failed, nothing left behind":
+        print("That didn't work, but nothing was created — you're back where you started.")
+        print(f"\n{outcome.error}")
+    elif outcome.recovery == "undone":
+        print("Removed what was built. You're back where you started.")
+    elif outcome.recovery == "finished":
+        print("Finished on the second attempt.")
+        if outcome.config:
+            print(f"\n{outcome.config.summary}")
+    elif outcome.recovery == "finish failed":
+        # The user is still holding half-built infrastructure and needs to
+        # know that, plus how to get rid of it.
+        print("It failed again, so I stopped rather than keep retrying.")
+        print(f"\nWhat's still there:\n{_leftovers(outcome)}")
+        print(f"\nRemove it with:  python -m stratus destroy --workspace {args.workspace}")
+        print(f"\n{outcome.error}")
+    elif outcome.recovery == "left as is":
+        print("Left the half-finished build alone, as asked.")
+        print(f"\nWhat's still there:\n{_leftovers(outcome)}")
+        print(f"\nRemove it with:  python -m stratus destroy --workspace {args.workspace}")
     elif outcome.applied:
         print("Done.")
         if outcome.config:
@@ -103,6 +123,17 @@ def cmd_build(args, parser) -> int:
         print(f"\n(needed {outcome.repairs_used} correction(s) along the way)")
     print(f"(model cost: ${outcome.cost_usd:.4f})")
     return 0
+
+
+def _leftovers(outcome) -> str:
+    """List what a half-finished build left behind."""
+    if not outcome.partial:
+        return "  (nothing)"
+    from stratus.explain import describe
+
+    return "\n".join(
+        f"  - {describe(address.split('.')[0])}" for address in outcome.partial.created
+    )
 
 
 def cmd_destroy(args, parser) -> int:
