@@ -167,6 +167,62 @@ def cmd_destroy(args, parser) -> int:
     return 0
 
 
+def cmd_history(args, parser) -> int:
+    from stratus.history import describe_entry, describe_history
+    from stratus.pipeline import Stratus
+
+    try:
+        stratus = Stratus(_subscription(args, parser), workspace=args.workspace)
+    except Exception as exc:  # noqa: BLE001
+        return _fail("Couldn't open that workspace.", str(exc))
+
+    if args.id:
+        entry = stratus.history.get(args.id)
+        if entry is None:
+            return _fail(f"No change matching '{args.id}'.")
+        print(describe_entry(entry))
+        return 0
+
+    print(describe_history(stratus.history.entries()))
+    return 0
+
+
+def cmd_rollback(args, parser) -> int:
+    from stratus.pipeline import Stratus
+
+    def confirm(text: str) -> str:
+        print("\n" + "-" * 64)
+        print(text)
+        print("-" * 64)
+        try:
+            return input("> ")
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    def progress(message: str) -> None:
+        print(f"  {message}", flush=True)
+
+    try:
+        stratus = Stratus(_subscription(args, parser), workspace=args.workspace)
+        outcome = stratus.rollback(args.id, confirm=confirm, on_progress=progress)
+    except Exception as exc:  # noqa: BLE001
+        return _fail("Couldn't roll back.", str(exc))
+
+    print()
+    if outcome.cancelled_reason == "no such change":
+        print(f"No change matching '{args.id}'. See:  stratus history")
+        return 1
+    if outcome.cancelled_reason == "nothing to do":
+        print("Things are already the way they were then. Nothing changed.")
+    elif outcome.cancelled_reason == "not approved":
+        print("Cancelled. Nothing was changed.")
+    elif outcome.applied:
+        print("Rolled back.")
+        if outcome.history_entry:
+            print(f"(recorded as {outcome.history_entry.id})")
+    return 0
+
+
 def cmd_drift(args, parser) -> int:
     from stratus.drift import explain_drift
     from stratus.pipeline import Stratus
@@ -231,6 +287,16 @@ def main(argv: list[str] | None = None) -> int:
         "drift", parents=[common], help="check whether anything changed outside Stratus"
     )
 
+    history = sub.add_parser(
+        "history", parents=[common], help="show what has been built and when"
+    )
+    history.add_argument("id", nargs="?", help="show one change in detail")
+
+    rollback = sub.add_parser(
+        "rollback", parents=[common], help="put things back to a previous change"
+    )
+    rollback.add_argument("id", help="the change to go back to (from `stratus history`)")
+
     args = parser.parse_args(argv)
 
     # Fill in what neither position supplied.
@@ -243,6 +309,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_build(args, parser)
     if args.command == "destroy":
         return cmd_destroy(args, parser)
+    if args.command == "history":
+        return cmd_history(args, parser)
+    if args.command == "rollback":
+        return cmd_rollback(args, parser)
     if args.command == "drift":
         return cmd_drift(args, parser)
     if args.command == "show":

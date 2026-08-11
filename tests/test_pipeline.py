@@ -378,3 +378,103 @@ class TestSafetyRules:
         s = _stratus(_plan(Action.CREATE), tmp_path)
         s.build("x", confirm=_Answers("yes"))
         assert s.runner.plan.call_count == 1
+
+
+class TestHistoryAndRollback:
+    def test_a_successful_build_is_recorded(self, tmp_path):
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = __import__("stratus.history", fromlist=["History"]).History(
+            tmp_path / "h"
+        )
+        outcome = s.build("a website", confirm=_Answers("yes"))
+        assert outcome.history_entry is not None
+        assert s.history.entries()[0].request == "a website"
+
+    def test_a_refused_build_is_not_recorded(self, tmp_path):
+        # A history full of things that did not happen cannot be trusted to
+        # answer "what does this account look like".
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        s.build("a website", confirm=_Answers("no"))
+        assert s.history.entries() == []
+
+    def test_the_record_keeps_the_configuration(self, tmp_path):
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        s.build("x", confirm=_Answers("yes"))
+        assert s.history.entries()[0].files == {"main.tf": "resource {}"}
+
+    def test_rollback_refuses_an_unknown_id(self, tmp_path):
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        outcome = s.rollback("nope", confirm=_Answers("yes"))
+        assert outcome.cancelled_reason == "no such change"
+        s.runner.apply.assert_not_called()
+
+    def test_rollback_asks_before_changing_anything(self, tmp_path):
+        # Going backwards can destroy things, so it earns no shortcut.
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        entry = s.history.record("earlier", "An earlier thing.", {"main.tf": "old"})
+
+        answers = _Answers("no")
+        outcome = s.rollback(entry.id, confirm=answers)
+        assert outcome.cancelled_reason == "not approved"
+        assert len(answers.asked) == 1
+        s.runner.apply.assert_not_called()
+
+    def test_rollback_says_what_it_is_going_back_to(self, tmp_path):
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        entry = s.history.record("the old website", "s", {"main.tf": "old"})
+
+        answers = _Answers("no")
+        s.rollback(entry.id, confirm=answers)
+        assert "the old website" in answers.asked[0]
+        assert "Rolling back" in answers.asked[0]
+
+    def test_rollback_applies_the_stored_configuration(self, tmp_path):
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        entry = s.history.record("earlier", "s", {"main.tf": "the old contents"})
+
+        outcome = s.rollback(entry.id, confirm=_Answers("yes"))
+        assert outcome.applied
+        written = [c.args for c in s.runner.write_config.call_args_list]
+        assert ("main.tf", "the old contents") in written
+
+    def test_rollback_is_itself_recorded(self, tmp_path):
+        # Append-only. A rollback is something that happened.
+        from stratus.history import History
+
+        s = _stratus(_plan(Action.CREATE), tmp_path)
+        s.history = History(tmp_path / "h")
+        entry = s.history.record("earlier", "s", {"main.tf": "old"})
+
+        s.rollback(entry.id, confirm=_Answers("yes"))
+        newest = s.history.entries()[0]
+        assert newest.outcome == f"rolled back to {entry.id}"
+        assert len(s.history.entries()) == 2
+
+    def test_rollback_to_the_current_state_changes_nothing(self, tmp_path):
+        from stratus.history import History
+
+        s = _stratus(Plan(changes=[]), tmp_path)
+        s.history = History(tmp_path / "h")
+        entry = s.history.record("earlier", "s", {"main.tf": "old"})
+
+        outcome = s.rollback(entry.id, confirm=_Answers("yes"))
+        assert outcome.cancelled_reason == "nothing to do"
+        s.runner.apply.assert_not_called()

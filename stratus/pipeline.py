@@ -21,13 +21,15 @@ from pathlib import Path
 from typing import Callable
 
 from stratus.agent import GeneratedConfig, TerraformGenerator
+from stratus.agent.generator import GeneratedFile
 from stratus.agent.prompts import DEFAULT_REGION
 from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
 from stratus.cost import Estimate, describe as describe_cost, estimate as estimate_cost
 from stratus.drift import Drift, from_plan, unmanaged
 from stratus.explain import confirmation_is_valid, explain
-from stratus.models import Plan, Snapshot
+from stratus.history import Entry, History
+from stratus.models import Action, Plan, Snapshot
 from stratus.policy import Review, describe_warnings, explain_block, review
 from stratus.recovery import PartialBuild, assess, explain_partial, parse_choice
 from stratus.terraform import TerraformError, TerraformRunner
@@ -75,6 +77,9 @@ class Outcome:
     cost: Estimate | None = None
     """What the plan would add to the monthly bill."""
 
+    history_entry: Entry | None = None
+    """The record written for this change, when one reached the cloud."""
+
 
 class Stratus:
     """One workspace: one set of infrastructure, one state file."""
@@ -115,6 +120,11 @@ class Stratus:
         self.backend = backend or StateStorage(subscription_id).config_for(
             f"{workspace}.tfstate"
         )
+
+        # Kept beside the workspace's Terraform files, so a workspace is
+        # self-contained: its configuration, its state pointer and its record
+        # of what happened all travel together.
+        self.history = History(self.runner.workdir / "history")
 
         # Filled in by _validate, which plans and reviews as part of deciding
         # whether a configuration is acceptable.
@@ -210,6 +220,96 @@ class Stratus:
             return outcome
 
         outcome.applied = True
+        self._record(outcome)
+        return outcome
+
+    def _record(self, outcome: Outcome, note: str = "applied") -> None:
+        """Write what just happened to the workspace's history.
+
+        Only changes that actually reached the cloud are recorded. A refused
+        plan or a cancelled build changed nothing, and a history full of
+        things that did not happen is worse than none — it cannot be trusted
+        to answer "what does this account look like".
+        """
+        if not outcome.config or not outcome.plan:
+            return
+        plan = outcome.plan
+        outcome.history_entry = self.history.record(
+            request=outcome.request,
+            summary=outcome.config.summary,
+            files=outcome.config.as_dict(),
+            created=[c.address for c in plan.of(Action.CREATE)],
+            changed=[c.address for c in plan.of(Action.UPDATE, Action.REPLACE)],
+            destroyed=[c.address for c in plan.of(Action.DELETE)],
+            outcome=note,
+        )
+
+    def rollback(
+        self,
+        entry_id: str,
+        confirm: Callable[[str], str],
+        on_progress: Callable[[str], None] = lambda _: None,
+    ) -> Outcome:
+        """Put the infrastructure back to how a previous change left it.
+
+        Re-applies the stored configuration rather than reversing the changes
+        since. Reversing would require knowing how to undo every intermediate
+        step, and any one of them being unreversible breaks the chain.
+        Re-applying a known-good configuration needs none of that: Terraform
+        works out the difference between it and reality.
+
+        It is an ordinary build in every other respect — planned, costed,
+        safety-checked and approved before anything happens. Going backwards
+        can destroy things, so it earns no shortcut.
+        """
+        outcome = Outcome(request=f"roll back to {entry_id}")
+
+        entry = self.history.get(entry_id)
+        if entry is None:
+            outcome.cancelled_reason = "no such change"
+            return outcome
+
+        on_progress(f"Restoring the configuration from {entry.id}...")
+        self._validate(entry.files)
+
+        plan = self._last_plan
+        assert plan is not None
+        outcome.plan = plan
+        outcome.review = self._last_review
+
+        if plan.is_empty:
+            outcome.cancelled_reason = "nothing to do"
+            return outcome
+
+        question = explain(plan)
+        outcome.cost = estimate_cost(plan, region=self.region)
+        for block in (describe_warnings(self._last_review) if self._last_review else "",
+                      describe_cost(outcome.cost)):
+            if block:
+                question = f"{block}\n\n{question}"
+        question = (
+            f"Rolling back to how things were on "
+            f"{entry.when.strftime('%d %b at %H:%M')}, when you asked for:\n"
+            f"  \"{entry.request}\"\n\n" + question
+        )
+
+        if not confirmation_is_valid(plan, confirm(question)):
+            outcome.cancelled_reason = "not approved"
+            return outcome
+
+        outcome.approved = True
+        on_progress("Putting it back...")
+        self.runner.apply(on_line=_progress_filter(on_progress))
+        outcome.applied = True
+
+        # Recorded as a change in its own right. History is append-only: a
+        # rollback is something that happened, not an erasure of what it
+        # undid.
+        outcome.config = GeneratedConfig(
+            files=[GeneratedFile(filename=n, contents=c) for n, c in entry.files.items()],
+            summary=entry.summary,
+        )
+        self._record(outcome, note=f"rolled back to {entry.id}")
         return outcome
 
     def _recover(
