@@ -1,9 +1,11 @@
 # Data models and validation
 pydantic>=2.9
 
-# Azure: authentication + listing what exists in an account
+# Azure: authentication, listing what exists, and creating the storage
+# account that holds Terraform's state
 azure-identity>=1.19
 azure-mgmt-resource>=23.1
+azure-mgmt-storage>=21.2
 
 # Loads settings from a local .env file that is never committed
 python-dotenv>=1.0
