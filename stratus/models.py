@@ -7,18 +7,18 @@ Stratus think a resource is".
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class Origin(str, Enum):
+class Origin(StrEnum):
     """Where a resource came from, from Stratus's point of view.
 
     This distinction is load-bearing. Stratus is allowed to modify and delete
@@ -97,7 +97,7 @@ class Resource(BaseModel):
         return self.origin is Origin.MANAGED
 
 
-class Action(str, Enum):
+class Action(StrEnum):
     """What is about to happen to one resource.
 
     These mirror Terraform's own vocabulary, because inventing our own would

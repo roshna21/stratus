@@ -106,3 +106,67 @@ class TestDescriptions:
         h = _history(tmp_path)
         entry = h.record("x", "s", {}, outcome="rolled back to abc123")
         assert "rolled back to abc123" in describe_entry(entry)
+
+
+class TestDamagedRecords:
+    """A record that silently vanishes is worse than one obviously missing:
+    the user concludes the change never happened."""
+
+    def test_a_damaged_file_is_counted(self, tmp_path):
+        h = _history(tmp_path)
+        h.record("good", "s", {})
+        (h.directory / "2020-01-01T00-00-00-broken.json").write_text("{not json")
+
+        entries = h.entries()
+        assert len(entries) == 1
+        assert len(h.unreadable) == 1
+        assert "broken" in h.unreadable[0][0]
+
+    def test_the_listing_says_so(self, tmp_path):
+        h = _history(tmp_path)
+        h.record("good", "s", {})
+        (h.directory / "2020-01-01T00-00-00-broken.json").write_text("{not json")
+
+        text = describe_history(h.entries(), h.unreadable)
+        assert "could not be read" in text
+        assert "broken" in text
+
+    def test_the_count_resets_between_listings(self, tmp_path):
+        # Stale counts would report a problem that has been fixed.
+        h = _history(tmp_path)
+        bad = h.directory
+        bad.mkdir(parents=True, exist_ok=True)
+        (bad / "2020-01-01T00-00-00-broken.json").write_text("{not json")
+        h.entries()
+        assert len(h.unreadable) == 1
+
+        (bad / "2020-01-01T00-00-00-broken.json").unlink()
+        h.entries()
+        assert h.unreadable == []
+
+    def test_a_clean_history_reports_none(self, tmp_path):
+        h = _history(tmp_path)
+        h.record("good", "s", {})
+        h.entries()
+        assert h.unreadable == []
+        assert "could not be read" not in describe_history(h.entries(), h.unreadable)
+
+
+class TestPathGuard:
+    """Path() stringifies almost anything, so a mistake upstream becomes a
+    real directory with a nonsense name instead of an error. It did: a mock
+    reached here and the suite wrote fifty history files into the repo."""
+
+    def test_refuses_something_that_is_not_a_path(self):
+        from unittest.mock import MagicMock
+
+        import pytest
+
+        with pytest.raises(TypeError, match="needs a path"):
+            History(MagicMock())
+
+    def test_accepts_a_string(self, tmp_path):
+        assert History(str(tmp_path)).directory == tmp_path
+
+    def test_accepts_a_path(self, tmp_path):
+        assert History(tmp_path).directory == tmp_path

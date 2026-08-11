@@ -120,9 +120,7 @@ class TestReplacing:
     def test_explains_that_a_replacement_destroys_the_original(self):
         # The trap this whole design exists for: Terraform calls it a
         # "replace", which sounds harmless, and it is not.
-        text = explain(
-            _plan(_change("azurerm_storage_account", "files", Action.REPLACE))
-        )
+        text = explain(_plan(_change("azurerm_storage_account", "files", Action.REPLACE)))
         assert "Destroying and rebuilding" in text
         assert "current contents are lost" in text
 

@@ -88,7 +88,9 @@ class TestUnknownIsNotFree:
         assert "could not look up" in result.items[0].note
 
     def test_the_summary_says_so_out_loud(self, offline):
-        text = describe(estimate(_plan(_change("azurerm_cognitive_account", "ai")), prices=offline))
+        text = describe(
+            estimate(_plan(_change("azurerm_cognitive_account", "ai")), prices=offline)
+        )
         assert "could not work out the cost" in text
 
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from stratus.models import Action, Plan, PlannedChange
-from stratus.policy import Severity, describe_warnings, explain_block, review
+from stratus.policy import describe_warnings, explain_block, review
 
 
 def _change(type_: str, name: str = "thing", action=Action.CREATE, **after) -> PlannedChange:
@@ -248,7 +248,8 @@ class TestMessages:
 
     def test_violations_name_the_resource_the_user_would_recognise(self):
         result = _review(
-            _change("azurerm_storage_container", "customer-uploads",
-                    container_access_type="blob")
+            _change(
+                "azurerm_storage_container", "customer-uploads", container_access_type="blob"
+            )
         )
         assert "customer-uploads" in result.blocked[0].problem

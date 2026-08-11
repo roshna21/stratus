@@ -69,6 +69,4 @@ def get_provider(name: str | None = None) -> ModelProvider:
 
         return AnthropicProvider()
 
-    raise ValueError(
-        f"Unknown model provider {chosen!r}. Known providers: gemini, anthropic."
-    )
+    raise ValueError(f"Unknown model provider {chosen!r}. Known providers: gemini, anthropic.")

@@ -18,8 +18,9 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from stratus.models import Plan
 from stratus.terraform.plan import parse_plan
@@ -140,7 +141,7 @@ class CapacityUnavailable(TerraformError):
             "Azure rarely says so directly — it surfaces as a timeout, a quota "
             "error, or a flat refusal.\n\n"
             "Try somewhere else:\n\n"
-            "    STRATUS_REGION=westus2 python -m stratus build \"...\"\n\n"
+            '    STRATUS_REGION=westus2 python -m stratus build "..."\n\n'
             "Regions usually worth trying: westus2, uksouth, northeurope, "
             "centralindia, southeastasia.\n\n"
             f"Azure said:\n{detail[:600]}"

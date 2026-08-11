@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ HOURS_PER_MONTH = 730
 CACHE_PATH = Path.home() / ".stratus" / "prices.json"
 
 
-class Kind(str, Enum):
+class Kind(StrEnum):
     FREE = "free"
     USAGE = "usage"
     FIXED = "fixed"
@@ -220,15 +220,11 @@ def estimate(plan: Plan, region: str = "eastus", prices: PriceBook | None = None
         type_ = change.type
 
         if type_ in ALWAYS_FREE:
-            result.items.append(
-                LineItem(change.name, Kind.FREE, note=ALWAYS_FREE[type_])
-            )
+            result.items.append(LineItem(change.name, Kind.FREE, note=ALWAYS_FREE[type_]))
             continue
 
         if type_ in USAGE_BASED:
-            result.items.append(
-                LineItem(change.name, Kind.USAGE, note=USAGE_BASED[type_])
-            )
+            result.items.append(LineItem(change.name, Kind.USAGE, note=USAGE_BASED[type_]))
             continue
 
         if type_ in PRICED:

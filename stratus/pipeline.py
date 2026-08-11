@@ -16,16 +16,18 @@ that runs the same as the thing that was approved.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from stratus.agent import GeneratedConfig, TerraformGenerator
 from stratus.agent.generator import GeneratedFile
 from stratus.agent.prompts import DEFAULT_REGION
 from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
-from stratus.cost import Estimate, describe as describe_cost, estimate as estimate_cost
+from stratus.cost import Estimate
+from stratus.cost import describe as describe_cost
+from stratus.cost import estimate as estimate_cost
 from stratus.drift import Drift, from_plan, unmanaged
 from stratus.explain import confirmation_is_valid, explain
 from stratus.history import Entry, History
@@ -96,6 +98,7 @@ class Stratus:
         runner=None,
         generator=None,
         backend=None,
+        history=None,
     ) -> None:
         """Build a workspace, or accept ready-made parts.
 
@@ -124,7 +127,7 @@ class Stratus:
         # Kept beside the workspace's Terraform files, so a workspace is
         # self-contained: its configuration, its state pointer and its record
         # of what happened all travel together.
-        self.history = History(self.runner.workdir / "history")
+        self.history = history or History(self.runner.workdir / "history")
 
         # Filled in by _validate, which plans and reviews as part of deciding
         # whether a configuration is acceptable.
@@ -207,9 +210,7 @@ class Stratus:
             # here would hand the user an error and abandon them holding
             # infrastructure they did not ask to keep, so instead work out
             # what survived and offer a way out.
-            outcome.partial = assess(
-                plan, self.runner.state_resources(), reason=str(exc)
-            )
+            outcome.partial = assess(plan, self.runner.state_resources(), reason=str(exc))
             outcome.error = exc
 
             if outcome.partial.is_clean_failure:
@@ -283,14 +284,16 @@ class Stratus:
 
         question = explain(plan)
         outcome.cost = estimate_cost(plan, region=self.region)
-        for block in (describe_warnings(self._last_review) if self._last_review else "",
-                      describe_cost(outcome.cost)):
+        for block in (
+            describe_warnings(self._last_review) if self._last_review else "",
+            describe_cost(outcome.cost),
+        ):
             if block:
                 question = f"{block}\n\n{question}"
         question = (
             f"Rolling back to how things were on "
             f"{entry.when.strftime('%d %b at %H:%M')}, when you asked for:\n"
-            f"  \"{entry.request}\"\n\n" + question
+            f'  "{entry.request}"\n\n' + question
         )
 
         if not confirmation_is_valid(plan, confirm(question)):

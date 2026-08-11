@@ -18,14 +18,15 @@ whole point is that the user should not have to know these rules exist.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Callable
+from enum import StrEnum
+from typing import Any
 
 from stratus.models import Action, Plan, PlannedChange
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     BLOCK = "block"
     """Refuse to build. Reserved for things that expose data to strangers or
     cost real money without being asked for."""
@@ -94,9 +95,7 @@ def publicly_readable_storage_account(change: PlannedChange) -> Violation | None
             rule="public-storage-account",
             severity=Severity.BLOCK,
             resource=change.name,
-            problem=(
-                f"'{change.name}' would allow its contents to be made public"
-            ),
+            problem=(f"'{change.name}' would allow its contents to be made public"),
             fix="turn public access off at the account level",
         )
     return None

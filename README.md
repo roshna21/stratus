@@ -1,5 +1,7 @@
 # Stratus
 
+[![tests](https://github.com/roshna21/stratus/actions/workflows/tests.yml/badge.svg)](https://github.com/roshna21/stratus/actions/workflows/tests.yml)
+
 **Describe the infrastructure you need in plain English. An agent designs it, shows you exactly what would change and what it would cost, and builds it on Azure once you agree.**
 
 You never see infrastructure code. You never learn a cloud console. You have a conversation.
@@ -88,6 +90,8 @@ Exactly one step calls a language model: step 2. Everything else has one correct
 
 ## Try it
 
+Needs Python 3.11 or newer.
+
 ```bash
 git clone https://github.com/roshna21/stratus && cd stratus
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
@@ -155,7 +159,7 @@ Web interface:
 ./.venv/bin/python -m pytest
 ```
 
-359 tests. **None of them touch a network, a cloud account, or a language model.** Every external thing is behind an interface with a fake on the other side, which is why the suite runs in under a second and costs nothing.
+363 tests. **None of them touch a network, a cloud account, or a language model.** Every external thing is behind an interface with a fake on the other side, which is why the suite runs in under a second and costs nothing.
 
 Several exist to hold a specific line rather than to cover code:
 
@@ -164,6 +168,11 @@ Several exist to hold a specific line rather than to cover code:
 - the system prompt contains no region name
 - a resource that cannot be priced is never reported as free
 - the web interface does not re-plan between describing and applying
+
+Continuous integration runs the suite on Python 3.11 and 3.13, lints and
+format-checks the code, and builds the container and curls its health
+endpoint — because a Dockerfile that no longer builds is discovered at
+deploy time otherwise.
 
 ## Licence
 

@@ -183,7 +183,8 @@ def cmd_history(args, parser) -> int:
         print(describe_entry(entry))
         return 0
 
-    print(describe_history(stratus.history.entries()))
+    entries = stratus.history.entries()
+    print(describe_history(entries, stratus.history.unreadable))
     return 0
 
 
@@ -276,9 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         help="read real Azure instead of the built-in demo account",
     )
 
-    build = sub.add_parser(
-        "build", parents=[common], help="build something from a description"
-    )
+    build = sub.add_parser("build", parents=[common], help="build something from a description")
     build.add_argument("request", help='what you need, e.g. "a website with a database"')
 
     sub.add_parser("destroy", parents=[common], help="tear down everything in a workspace")

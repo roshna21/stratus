@@ -14,7 +14,8 @@ Two implementations live here:
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Protocol
+from collections.abc import Iterable
+from typing import Any, Protocol
 
 from stratus.models import Origin, Resource, Snapshot
 
@@ -102,9 +103,7 @@ class LiveAzureReader:
         `properties` stays empty here rather than making hundreds of calls to
         populate a field nothing reads.
         """
-        resources = [
-            self._to_resource(item) for item in self._client.resources.list()
-        ]
+        resources = [self._to_resource(item) for item in self._client.resources.list()]
         return Snapshot(subscription_id=self.subscription_id, resources=resources)
 
     @staticmethod
@@ -162,8 +161,7 @@ def _make(
 ) -> Resource:
     """Build a Resource with a realistically-shaped Azure id."""
     resource_id = (
-        f"/subscriptions/{subscription}/resourceGroups/{group}"
-        f"/providers/{type_}/{name}"
+        f"/subscriptions/{subscription}/resourceGroups/{group}/providers/{type_}/{name}"
     )
     tags = tags or {}
     return Resource(
@@ -189,11 +187,18 @@ def _example_account() -> list[Resource]:
             tags={STRATUS_TAG: STRATUS_TAG_VALUE},
         ),
         # A second resource in the same group, to prove grouping works.
-        _make("stratus-plan-a41f", "Microsoft.Web/serverfarms",
-              tags={STRATUS_TAG: STRATUS_TAG_VALUE}),
+        _make(
+            "stratus-plan-a41f",
+            "Microsoft.Web/serverfarms",
+            tags={STRATUS_TAG: STRATUS_TAG_VALUE},
+        ),
         # A global resource, which has no location at all.
         _make("demo-dns", "Microsoft.Network/dnsZones", location=None),
         # A resource in a different group, to prove we read across groups.
-        _make("legacy-db", "Microsoft.DBforPostgreSQL/flexibleServers",
-              group="old-rg", location="northeurope"),
+        _make(
+            "legacy-db",
+            "Microsoft.DBforPostgreSQL/flexibleServers",
+            group="old-rg",
+            location="northeurope",
+        ),
     ]

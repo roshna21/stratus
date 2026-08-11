@@ -134,7 +134,9 @@ class TestExplanation:
 
 
 class TestChoiceParsing:
-    @pytest.mark.parametrize("answer", ["finish", "FINISH", " finish ", "f", "retry", "continue"])
+    @pytest.mark.parametrize(
+        "answer", ["finish", "FINISH", " finish ", "f", "retry", "continue"]
+    )
     def test_reads_finish(self, answer):
         assert parse_choice(answer) == "finish"
 

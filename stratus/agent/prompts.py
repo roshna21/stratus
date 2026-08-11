@@ -119,9 +119,7 @@ a failed apply may have left resources behind, and silently rebuilding
 somewhere else would strand them."""
 
 
-def build_user_message(
-    request: str, existing: Snapshot, region: str = DEFAULT_REGION
-) -> str:
+def build_user_message(request: str, existing: Snapshot, region: str = DEFAULT_REGION) -> str:
     """Assemble the per-request half of the conversation.
 
     The existing inventory and the region go here rather than in the system

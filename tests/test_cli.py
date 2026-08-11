@@ -6,8 +6,6 @@ wrong and nobody thinks to test.
 
 from __future__ import annotations
 
-import pytest
-
 from stratus.__main__ import main
 
 
@@ -32,28 +30,35 @@ class TestSharedOptions:
         return seen["workspace"]
 
     def test_before_the_subcommand(self, monkeypatch):
-        assert self._workspace(
-            ["--subscription", "s", "--workspace", "mine", "drift"], monkeypatch
-        ) == "mine"
+        assert (
+            self._workspace(
+                ["--subscription", "s", "--workspace", "mine", "drift"], monkeypatch
+            )
+            == "mine"
+        )
 
     def test_after_the_subcommand(self, monkeypatch):
         # How people actually write it. argparse rejects this unless the
         # option is attached to the subparser too.
-        assert self._workspace(
-            ["drift", "--subscription", "s", "--workspace", "mine"], monkeypatch
-        ) == "mine"
+        assert (
+            self._workspace(
+                ["drift", "--subscription", "s", "--workspace", "mine"], monkeypatch
+            )
+            == "mine"
+        )
 
     def test_defaults_when_given_neither(self, monkeypatch):
         assert self._workspace(["--subscription", "s", "drift"], monkeypatch) == "default"
 
-    def test_a_top_level_value_is_not_overwritten_by_the_subcommand_default(
-        self, monkeypatch
-    ):
+    def test_a_top_level_value_is_not_overwritten_by_the_subcommand_default(self, monkeypatch):
         # The argparse trap this design exists to avoid: with an ordinary
         # default on the subparser, the top-level value is silently replaced.
-        assert self._workspace(
-            ["--workspace", "mine", "--subscription", "s", "drift"], monkeypatch
-        ) == "mine"
+        assert (
+            self._workspace(
+                ["--workspace", "mine", "--subscription", "s", "drift"], monkeypatch
+            )
+            == "mine"
+        )
 
 
 class TestDemoMode:
@@ -72,8 +77,11 @@ class TestDriftExitCode:
         from stratus.drift import Drift
 
         class Clean:
-            def __init__(self, *a, **k): pass
-            def check_drift(self): return Drift()
+            def __init__(self, *a, **k):
+                pass
+
+            def check_drift(self):
+                return Drift()
 
         monkeypatch.setattr("stratus.pipeline.Stratus", Clean)
         assert main(["--subscription", "s", "drift"]) == 0
@@ -83,9 +91,13 @@ class TestDriftExitCode:
         from stratus.drift import Drift, DriftItem
 
         class Drifted:
-            def __init__(self, *a, **k): pass
+            def __init__(self, *a, **k):
+                pass
+
             def check_drift(self):
-                return Drift(vanished=[DriftItem("a.b", "vanished", "azurerm_storage_account", "b")])
+                return Drift(
+                    vanished=[DriftItem("a.b", "vanished", "azurerm_storage_account", "b")]
+                )
 
         monkeypatch.setattr("stratus.pipeline.Stratus", Drifted)
         assert main(["--subscription", "s", "drift"]) == 1

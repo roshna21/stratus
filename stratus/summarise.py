@@ -23,7 +23,10 @@ FRIENDLY_NAMES: dict[str, tuple[str, str]] = {
     "Microsoft.Web/sites": ("web app", "web apps"),
     "Microsoft.Web/serverfarms": ("hosting plan", "hosting plans"),
     "Microsoft.Compute/virtualMachines": ("virtual machine", "virtual machines"),
-    "Microsoft.DBforPostgreSQL/flexibleServers": ("PostgreSQL database", "PostgreSQL databases"),
+    "Microsoft.DBforPostgreSQL/flexibleServers": (
+        "PostgreSQL database",
+        "PostgreSQL databases",
+    ),
     "Microsoft.DBforMySQL/flexibleServers": ("MySQL database", "MySQL databases"),
     "Microsoft.Sql/servers": ("SQL server", "SQL servers"),
     "Microsoft.Network/virtualNetworks": ("private network", "private networks"),

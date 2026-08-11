@@ -20,12 +20,18 @@ from stratus.web import PENDING_TTL, create_app
 
 
 def _plan(*actions: Action) -> Plan:
-    return Plan(changes=[
-        PlannedChange(
-            address=f"azurerm_storage_account.r{i}", type="azurerm_storage_account",
-            name=f"r{i}", action=a, after={"name": f"r{i}"},
-        ) for i, a in enumerate(actions)
-    ])
+    return Plan(
+        changes=[
+            PlannedChange(
+                address=f"azurerm_storage_account.r{i}",
+                type="azurerm_storage_account",
+                name=f"r{i}",
+                action=a,
+                after={"name": f"r{i}"},
+            )
+            for i, a in enumerate(actions)
+        ]
+    )
 
 
 @pytest.fixture
@@ -56,7 +62,8 @@ def client(monkeypatch, tmp_path):
             self._last_review = None
             holder["instance"] = self
 
-        def _validate(self, files): pass
+        def _validate(self, files):
+            pass
 
     monkeypatch.setattr("stratus.pipeline.Stratus", FakeStratus)
     app = create_app("test-sub")
@@ -145,9 +152,9 @@ class TestApproval:
     def test_a_fresh_plan_is_not_refused_as_stale(self, client):
         c, _ = client
         pending = c.post("/api/plan", json={"request": "x"}).json()
-        assert c.post(
-            "/api/apply", json={"id": pending["id"], "answer": "yes"}
-        ).status_code == 200
+        assert (
+            c.post("/api/apply", json={"id": pending["id"], "answer": "yes"}).status_code == 200
+        )
 
 
 class TestDestructivePlans:

@@ -16,9 +16,7 @@ from stratus.models import Action, Origin, Plan, PlannedChange, Resource, Snapsh
 
 
 def _change(type_: str, name: str, action: Action) -> PlannedChange:
-    return PlannedChange(
-        address=f"{type_}.{name}", type=type_, name=name, action=action
-    )
+    return PlannedChange(address=f"{type_}.{name}", type=type_, name=name, action=action)
 
 
 def _plan(*changes: PlannedChange) -> Plan:

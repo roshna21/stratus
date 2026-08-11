@@ -1,0 +1,15 @@
+line-length = 96
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "S", "C4"]
+ignore = [
+  "E501",    # long lines: the formatter owns wrapping
+  "B008",    # FastAPI depends on calls in argument defaults
+  "S101",    # asserts are how tests are written
+  "S603",    # subprocess calls here are built from literals, never user text
+  "S607",    # terraform is resolved via shutil.which, not a bare relative path
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]  # fake credentials in fixtures

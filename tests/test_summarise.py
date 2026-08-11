@@ -43,8 +43,7 @@ class TestFriendlyType:
     def test_translates_the_worst_offender(self):
         # If any Azure type string justifies this whole module, it's this one.
         assert (
-            friendly_type("Microsoft.DBforPostgreSQL/flexibleServers")
-            == "PostgreSQL database"
+            friendly_type("Microsoft.DBforPostgreSQL/flexibleServers") == "PostgreSQL database"
         )
 
     def test_falls_back_readably_for_an_unknown_type(self):
@@ -82,9 +81,7 @@ class TestSummarise:
         assert "3 were already here" in text
 
     def test_when_it_owns_everything_it_says_so(self):
-        text = summarise(
-            _snapshot(_resource("a", "Microsoft.Web/sites", managed=True))
-        )
+        text = summarise(_snapshot(_resource("a", "Microsoft.Web/sites", managed=True)))
         assert "I set all of these up" in text
 
     def test_when_it_owns_nothing_it_promises_to_be_careful(self):

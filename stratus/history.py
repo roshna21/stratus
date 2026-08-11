@@ -19,12 +19,12 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -74,8 +74,24 @@ class History:
     record instead of all of them.
     """
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path | str):
+        # Path() will happily accept almost anything and stringify it, so a
+        # mistake upstream becomes a real directory with a nonsense name
+        # rather than an error. That is exactly what happened: a test passed
+        # a mock here and the suite wrote history into a directory called
+        # "MagicMock/mock.workdir.__truediv__()/...", fifty files of which
+        # were committed before anyone noticed.
+        if not isinstance(directory, (str, Path)):
+            raise TypeError(
+                f"History needs a path, got {type(directory).__name__}. "
+                "This usually means the workspace was built with a stand-in "
+                "object that has no real directory."
+            )
+
         self.directory = Path(directory)
+
+        self.unreadable: list[tuple[str, str]] = []
+        """Files that could not be read, refreshed on every listing."""
 
     def record(
         self,
@@ -108,7 +124,15 @@ class History:
         return entry
 
     def entries(self) -> list[Entry]:
-        """Every recorded change, newest first."""
+        """Every readable change, newest first.
+
+        A damaged file is skipped rather than allowed to hide the rest — but
+        it is *counted*, not swallowed. History exists to be trusted, and a
+        record that silently vanishes is worse than one that is obviously
+        missing: the user concludes the change never happened.
+        """
+        self.unreadable = []
+
         if not self.directory.exists():
             return []
 
@@ -116,8 +140,8 @@ class History:
         for path in sorted(self.directory.glob("*.json"), reverse=True):
             try:
                 found.append(Entry(**json.loads(path.read_text())))
-            except Exception:  # noqa: BLE001 - one damaged file must not hide the rest
-                continue
+            except (OSError, ValueError, TypeError) as exc:
+                self.unreadable.append((path.name, str(exc)))
         return found
 
     def get(self, entry_id: str) -> Entry | None:
@@ -130,14 +154,24 @@ class History:
         return found[0] if found else None
 
 
-def describe_history(entries: list[Entry]) -> str:
-    if not entries:
+def describe_history(
+    entries: list[Entry], unreadable: list[tuple[str, str]] | None = None
+) -> str:
+    if not entries and not unreadable:
         return "Nothing has been built in this workspace yet."
 
     lines = [f"{len(entries)} change{'' if len(entries) == 1 else 's'}, newest first:", ""]
     lines.extend(f"  {entry.describe()}" for entry in entries)
     lines.append("")
     lines.append("To go back to one:  stratus rollback <id>")
+
+    if unreadable:
+        # Said out loud. A record that silently vanishes is worse than one
+        # that is obviously missing.
+        lines.append("")
+        lines.append(f"{len(unreadable)} record(s) could not be read:")
+        lines.extend(f"  - {name}" for name, _ in unreadable)
+
     return "\n".join(lines)
 
 

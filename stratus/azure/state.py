@@ -142,7 +142,7 @@ class StateStorage:
         them, a storage account, and a container inside it. Takes roughly
         30-60 seconds the first time and is near-instant afterwards.
         """
-        from azure.core.exceptions import HttpResponseError, ResourceExistsError
+        from azure.core.exceptions import ResourceExistsError
 
         resources, storage = self._clients()
 
@@ -260,9 +260,7 @@ class StateStorage:
         from azure.core.exceptions import ResourceNotFoundError
 
         try:
-            storage.storage_accounts.get_properties(
-                STATE_RESOURCE_GROUP, self.account_name
-            )
+            storage.storage_accounts.get_properties(STATE_RESOURCE_GROUP, self.account_name)
             return True
         except ResourceNotFoundError:
             return False

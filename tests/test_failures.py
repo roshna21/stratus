@@ -39,7 +39,7 @@ Lock Info:
 GATEWAY_TIMEOUT = (
     'Error: creating Service Plan: {"error":{"code":"GatewayTimeout",'
     '"message":"The gateway did not receive a response from '
-    '\'Microsoft.Web\' within the specified time period."}}'
+    "'Microsoft.Web' within the specified time period.\"}}"
 )
 
 REGION_REFUSED = (
@@ -62,22 +62,22 @@ class TestStaleLock:
         assert _extract_lock_id("Error acquiring the state lock") is None
 
     def test_the_message_gives_the_exact_command(self):
-        locked = StateLocked(_error(LOCK_OUTPUT), Path("/tmp/ws"))
+        locked = StateLocked(_error(LOCK_OUTPUT), Path("/workspaces/example"))
         message = str(locked)
         assert "terraform force-unlock 822ebbb4-13c4-c5db-05f2-4326bbc276b6" in message
-        assert "/tmp/ws" in message
+        assert "/workspaces/example" in message
 
     def test_it_tells_you_to_check_first(self):
         # Unlocking underneath a live operation is how state gets corrupted,
         # so the check has to come before the fix.
-        message = str(StateLocked(_error(LOCK_OUTPUT), Path("/tmp/ws")))
+        message = str(StateLocked(_error(LOCK_OUTPUT), Path("/workspaces/example")))
         assert "pgrep" in message
         assert message.index("pgrep") < message.index("force-unlock")
 
     def test_it_explains_why_the_lock_exists(self):
         # A user who thinks the lock is a bug will disable locking, which
         # removes the protection entirely.
-        message = str(StateLocked(_error(LOCK_OUTPUT), Path("/tmp/ws")))
+        message = str(StateLocked(_error(LOCK_OUTPUT), Path("/workspaces/example")))
         assert "safety" in message.lower()
         assert "corrupt" in message.lower()
 

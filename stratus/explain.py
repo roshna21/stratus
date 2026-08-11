@@ -152,8 +152,7 @@ def explain(plan: Plan) -> str:
     if replaces:
         count = len(replaces)
         lines.append(
-            f"Destroying and rebuilding {count} "
-            f"{'thing' if count == 1 else 'things'}:"
+            f"Destroying and rebuilding {count} {'thing' if count == 1 else 'things'}:"
         )
         for change in replaces:
             warning = (
@@ -182,8 +181,11 @@ def explain(plan: Plan) -> str:
     if updates:
         primary, supporting = _group(updates)
         lines.append("Changing settings on:")
-        lines.extend(_bullet_list(primary, supporting) if primary else
-                     [f"  - {supporting} supporting piece(s)"])
+        lines.extend(
+            _bullet_list(primary, supporting)
+            if primary
+            else [f"  - {supporting} supporting piece(s)"]
+        )
         lines.append("")
 
     if not deletes and not replaces:

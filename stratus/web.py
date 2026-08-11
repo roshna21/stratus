@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from dotenv import load_dotenv
@@ -62,11 +62,11 @@ class Pending:
     """The configuration that produced the plan, kept so the change can be
     recorded in history with the same detail a command-line build gets."""
 
-    created: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def expired(self) -> bool:
-        return datetime.now(timezone.utc) - self.created > PENDING_TTL
+        return datetime.now(UTC) - self.created > PENDING_TTL
 
 
 class BuildRequest(BaseModel):
@@ -185,8 +185,7 @@ def create_app(subscription_id: str | None = None) -> FastAPI:
             del pending[body.id]
             raise HTTPException(
                 410,
-                "That plan is too old to be trusted. Ask again to get a fresh "
-                "one.",
+                "That plan is too old to be trusted. Ask again to get a fresh one.",
             )
 
         stratus = entry.stratus

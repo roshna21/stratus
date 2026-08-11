@@ -13,7 +13,8 @@ Which model is a configuration choice. Nothing in this file knows or cares.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -52,8 +53,7 @@ class GeneratedConfig(BaseModel):
     )
     assumptions: list[str] = Field(
         default_factory=list,
-        description="Decisions taken that the person did not specify, in plain "
-        "language.",
+        description="Decisions taken that the person did not specify, in plain language.",
     )
 
     def as_dict(self) -> dict[str, str]:

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from stratus.azure.reader import (
     STRATUS_TAG,
     STRATUS_TAG_VALUE,
