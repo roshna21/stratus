@@ -10,10 +10,17 @@ asks for or stores a credential.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+from dotenv import load_dotenv
 
 from stratus.azure import FakeAzureReader, LiveAzureReader
 from stratus.summarise import summarise
+
+# Reads a local .env if there is one. Keeping the subscription id out of the
+# command line means it never lands in your shell history or a screenshot.
+load_dotenv()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,13 +36,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--subscription",
         metavar="ID",
-        help="Azure subscription id (required with --live)",
+        default=os.getenv("AZURE_SUBSCRIPTION_ID"),
+        help="Azure subscription id (defaults to AZURE_SUBSCRIPTION_ID from .env)",
     )
     args = parser.parse_args(argv)
 
     if args.live:
         if not args.subscription:
-            parser.error("--live also needs --subscription <id>")
+            parser.error(
+                "no subscription id. Either pass --subscription <id>, or put\n"
+                "AZURE_SUBSCRIPTION_ID in a .env file (see .env.example).\n"
+                "Find yours with:  az account list --output table"
+            )
         try:
             reader = LiveAzureReader(args.subscription)
             snapshot = reader.read()
