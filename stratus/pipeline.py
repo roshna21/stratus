@@ -25,6 +25,7 @@ from stratus.agent.prompts import DEFAULT_REGION
 from stratus.azure import LiveAzureReader
 from stratus.azure.state import StateStorage
 from stratus.cost import Estimate, describe as describe_cost, estimate as estimate_cost
+from stratus.drift import Drift, from_plan, unmanaged
 from stratus.explain import confirmation_is_valid, explain
 from stratus.models import Plan, Snapshot
 from stratus.policy import Review, describe_warnings, explain_block, review
@@ -277,6 +278,18 @@ class Stratus:
         self.runner.destroy(on_line=_progress_filter(on_progress))
         outcome.applied = True
         return outcome
+
+    def check_drift(self) -> Drift:
+        """Has anything moved since we last agreed what should exist?
+
+        Planning the *existing* configuration is the whole method: the
+        configuration has not changed, so anything Terraform now proposes is
+        a difference the cloud introduced. This needs no generation and no
+        model call, so it is free and fast enough to run on a schedule.
+        """
+        drift = from_plan(self.runner.plan())
+        drift.appeared = unmanaged(self.reader.read())
+        return drift
 
     def _validate(self, files: dict[str, str]) -> None:
         """Decide whether a generated configuration is acceptable.

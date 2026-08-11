@@ -167,6 +167,22 @@ def cmd_destroy(args, parser) -> int:
     return 0
 
 
+def cmd_drift(args, parser) -> int:
+    from stratus.drift import explain_drift
+    from stratus.pipeline import Stratus
+
+    try:
+        stratus = Stratus(_subscription(args, parser), workspace=args.workspace)
+        drift = stratus.check_drift()
+    except Exception as exc:  # noqa: BLE001
+        return _fail("Couldn't check for changes.", str(exc))
+
+    print(explain_drift(drift))
+    # A non-zero exit when things have moved, so this is usable from a
+    # scheduled job that should raise an alarm rather than log quietly.
+    return 1 if drift.has_drift else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stratus",
@@ -198,12 +214,16 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("destroy", help="tear down everything in a workspace")
 
+    sub.add_parser("drift", help="check whether anything changed outside Stratus")
+
     args = parser.parse_args(argv)
 
     if args.command == "build":
         return cmd_build(args, parser)
     if args.command == "destroy":
         return cmd_destroy(args, parser)
+    if args.command == "drift":
+        return cmd_drift(args, parser)
     if args.command == "show":
         return cmd_show(args, parser)
 
