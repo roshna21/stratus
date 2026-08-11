@@ -1,5 +1,6 @@
 # The reasoning layer
-anthropic>=0.69
+google-genai>=1.0        # default: free tier, no card needed
+anthropic>=0.69          # optional: paid
 
 # Data models and validation
 pydantic>=2.9

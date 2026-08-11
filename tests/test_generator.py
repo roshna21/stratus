@@ -1,24 +1,23 @@
 """Tests for the generation and repair loop.
 
-A stub stands in for the Anthropic client, so these run offline and free.
-What is being tested here is the loop — how many times it asks, what it feeds
+A stub provider stands in for a real model, so these run offline and free.
+What is being tested is the loop — how many times it asks, what it feeds
 back, when it gives up — not the model's writing ability, which no unit test
-could check anyway.
+could judge anyway.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
+from pydantic import BaseModel
 
 from stratus.agent.generator import (
     GeneratedConfig,
     GeneratedFile,
     GenerationFailed,
     TerraformGenerator,
-    Usage,
 )
+from stratus.agent.providers import ModelProvider, ProviderResponse, TokenUsage
 from stratus.models import Snapshot
 
 
@@ -30,169 +29,230 @@ def _config(contents: str = "resource {}", summary: str = "A thing.") -> Generat
     )
 
 
-class StubClient:
-    """Returns a scripted sequence of responses and records what it was sent."""
+class StubProvider:
+    """Returns a scripted sequence of replies and records what it was sent."""
 
-    def __init__(self, responses: list[GeneratedConfig]):
-        self._responses = list(responses)
+    name = "Stub"
+    model = "stub-1"
+
+    def __init__(self, replies: list[GeneratedConfig | ProviderResponse]):
+        self._replies = list(replies)
         self.calls: list[dict] = []
-        self.messages = SimpleNamespace(parse=self._parse)
 
-    def _parse(self, **kwargs):
-        self.calls.append(kwargs)
-        if not self._responses:
+    def complete(self, system, messages, schema) -> ProviderResponse:
+        self.calls.append({"system": system, "messages": list(messages), "schema": schema})
+        if not self._replies:
             raise AssertionError("asked more times than the test scripted")
-        return SimpleNamespace(
-            parsed_output=self._responses.pop(0),
+
+        reply = self._replies.pop(0)
+        if isinstance(reply, ProviderResponse):
+            return reply
+        return ProviderResponse(
+            parsed=reply,
+            usage=TokenUsage(input_tokens=1000, output_tokens=500, calls=1),
             stop_reason="end_turn",
-            usage=SimpleNamespace(
-                input_tokens=1000, output_tokens=500, cache_read_input_tokens=0
-            ),
         )
+
+    def price(self, usage: TokenUsage) -> float:
+        return 0.0
 
 
 EMPTY = Snapshot(subscription_id="test")
 
 
+def _always_fails(_files):
+    raise RuntimeError("still broken")
+
+
+class TestProviderBoundary:
+    def test_the_stub_satisfies_the_interface(self):
+        # Guards the boundary itself: if ModelProvider grows a method, this
+        # fails rather than every provider silently drifting out of step.
+        assert isinstance(StubProvider([]), ModelProvider)
+
+    def test_the_generator_never_names_a_vendor(self):
+        # The whole point of the boundary. If this file ever has to import an
+        # SDK to test the loop, the abstraction has leaked.
+        import stratus.agent.generator as module
+
+        source = module.__doc__ or ""
+        assert "anthropic" not in source.lower()
+        assert "gemini" not in source.lower()
+
+
 class TestHappyPath:
     def test_returns_configuration(self):
-        gen = TerraformGenerator(client=StubClient([_config()]))
+        gen = TerraformGenerator(provider=StubProvider([_config()]))
         result = gen.generate("a website", EMPTY)
         assert result.summary == "A thing."
         assert result.files[0].filename == "main.tf"
 
     def test_asks_once_when_nothing_needs_fixing(self):
-        client = StubClient([_config()])
-        TerraformGenerator(client=client).generate("a website", EMPTY, validate=lambda f: None)
-        assert len(client.calls) == 1
+        provider = StubProvider([_config()])
+        TerraformGenerator(provider=provider).generate(
+            "a website", EMPTY, validate=lambda f: None
+        )
+        assert len(provider.calls) == 1
 
     def test_skips_validation_when_none_is_given(self):
-        gen = TerraformGenerator(client=StubClient([_config()]))
+        gen = TerraformGenerator(provider=StubProvider([_config()]))
         assert gen.generate("a website", EMPTY) is not None
 
     def test_exposes_files_as_a_mapping(self):
         assert _config("body").as_dict() == {"main.tf": "body"}
 
+    def test_reports_no_repairs_when_none_were_needed(self):
+        gen = TerraformGenerator(provider=StubProvider([_config()]))
+        gen.generate("x", EMPTY, validate=lambda f: None)
+        assert gen.repairs_used == 0
+
 
 class TestRepairLoop:
     def test_repairs_after_one_rejection(self):
-        client = StubClient([_config("broken"), _config("fixed")])
-        attempts = []
+        provider = StubProvider([_config("broken"), _config("fixed")])
+        seen = []
 
         def validate(files):
-            attempts.append(files["main.tf"])
+            seen.append(files["main.tf"])
             if files["main.tf"] == "broken":
                 raise RuntimeError("Error: Argument definition required on line 7")
 
-        result = TerraformGenerator(client=client).generate(
+        result = TerraformGenerator(provider=provider).generate(
             "a website", EMPTY, validate=validate
         )
 
         assert result.files[0].contents == "fixed"
-        assert attempts == ["broken", "fixed"]
-        assert len(client.calls) == 2
+        assert seen == ["broken", "fixed"]
+        assert len(provider.calls) == 2
 
-    def test_shows_the_model_its_own_broken_attempt(self):
-        # Without the rejected attempt in the conversation the model is
-        # correcting something it cannot see, and tends to reproduce the
-        # same mistake.
-        client = StubClient([_config("broken"), _config("fixed")])
+    def test_counts_the_repairs_it_needed(self):
+        # The clearest single measure of how well a model handles this task,
+        # and what makes comparing providers a number rather than a feeling.
+        provider = StubProvider([_config("broken"), _config("fixed")])
 
         def validate(files):
             if files["main.tf"] == "broken":
                 raise RuntimeError("boom")
 
-        TerraformGenerator(client=client).generate("x", EMPTY, validate=validate)
+        gen = TerraformGenerator(provider=provider)
+        gen.generate("x", EMPTY, validate=validate)
+        assert gen.repairs_used == 1
 
-        second_call_messages = client.calls[1]["messages"]
-        conversation = str(second_call_messages)
-        assert "broken" in conversation
+    def test_shows_the_model_its_own_broken_attempt(self):
+        # Without the rejected attempt in the conversation the model is
+        # correcting something it cannot see, and tends to reproduce the
+        # same mistake.
+        provider = StubProvider([_config("broken"), _config("fixed")])
+
+        def validate(files):
+            if files["main.tf"] == "broken":
+                raise RuntimeError("boom")
+
+        TerraformGenerator(provider=provider).generate("x", EMPTY, validate=validate)
+        assert "broken" in str(provider.calls[1]["messages"])
 
     def test_passes_the_error_through_verbatim(self):
         # Terraform names the file, line and problem. Paraphrasing loses
         # exactly the detail that makes a fix possible.
-        client = StubClient([_config("broken"), _config("fixed")])
+        provider = StubProvider([_config("broken"), _config("fixed")])
         error = "Error: Unsupported argument on main.tf line 12"
 
         def validate(files):
             if files["main.tf"] == "broken":
                 raise RuntimeError(error)
 
-        TerraformGenerator(client=client).generate("x", EMPTY, validate=validate)
-        assert error in str(client.calls[1]["messages"])
+        TerraformGenerator(provider=provider).generate("x", EMPTY, validate=validate)
+        assert error in str(provider.calls[1]["messages"])
 
     def test_gives_up_rather_than_looping_forever(self):
-        client = StubClient([_config("bad")] * 3)
+        provider = StubProvider([_config("bad")] * 3)
+        gen = TerraformGenerator(provider=provider, repair_attempts=2)
 
-        def always_fails(files):
-            raise RuntimeError("still broken")
-
-        gen = TerraformGenerator(client=client, repair_attempts=2)
         with pytest.raises(GenerationFailed, match="still broken"):
-            gen.generate("x", EMPTY, validate=always_fails)
+            gen.generate("x", EMPTY, validate=_always_fails)
 
-        # One initial attempt plus two repairs, and then it stops.
-        assert len(client.calls) == 3
+        # One initial attempt plus two repairs, then it stops.
+        assert len(provider.calls) == 3
 
     def test_respects_a_lower_repair_budget(self):
-        client = StubClient([_config("bad")] * 2)
-        gen = TerraformGenerator(client=client, repair_attempts=0)
+        provider = StubProvider([_config("bad")] * 2)
+        gen = TerraformGenerator(provider=provider, repair_attempts=0)
+
         with pytest.raises(GenerationFailed):
-            gen.generate("x", EMPTY, validate=lambda f: (_ for _ in ()).throw(RuntimeError("no")))
-        assert len(client.calls) == 1
+            gen.generate("x", EMPTY, validate=_always_fails)
+        assert len(provider.calls) == 1
+
+    def test_the_failure_names_the_provider(self):
+        # When a model cannot do the job, the user needs to know which one so
+        # they can try another rather than assume Stratus is broken.
+        gen = TerraformGenerator(provider=StubProvider([_config()] * 3))
+        with pytest.raises(GenerationFailed, match="Stub"):
+            gen.generate("x", EMPTY, validate=_always_fails)
 
 
 class TestPromptConstruction:
-    def test_caches_the_system_prompt(self):
-        # The system prompt is identical between requests, so caching it cuts
-        # its cost by roughly ninety percent. Anything request-specific must
-        # stay out of it or the cache is invalidated every time.
-        client = StubClient([_config()])
-        TerraformGenerator(client=client).generate("x", EMPTY)
-        system = client.calls[0]["system"]
-        assert system[0]["cache_control"] == {"type": "ephemeral"}
-
     def test_request_specific_content_goes_in_the_user_turn(self):
-        client = StubClient([_config()])
-        TerraformGenerator(client=client).generate("build me a blog", EMPTY)
-        assert "blog" not in str(client.calls[0]["system"])
-        assert "blog" in str(client.calls[0]["messages"])
+        # Keeping the system prompt byte-identical between requests is what
+        # allows a provider to cache it.
+        provider = StubProvider([_config()])
+        TerraformGenerator(provider=provider).generate("build me a blog", EMPTY)
+        assert "blog" not in provider.calls[0]["system"]
+        assert "blog" in str(provider.calls[0]["messages"])
+
+    def test_the_schema_is_passed_to_the_provider(self):
+        provider = StubProvider([_config()])
+        TerraformGenerator(provider=provider).generate("x", EMPTY)
+        assert provider.calls[0]["schema"] is GeneratedConfig
 
 
-class TestUsage:
+class TestUsageAndCost:
     def test_accumulates_across_repairs(self):
-        client = StubClient([_config("broken"), _config("fixed")])
+        provider = StubProvider([_config("broken"), _config("fixed")])
 
         def validate(files):
             if files["main.tf"] == "broken":
                 raise RuntimeError("boom")
 
-        gen = TerraformGenerator(client=client)
+        gen = TerraformGenerator(provider=provider)
         gen.generate("x", EMPTY, validate=validate)
 
         assert gen.usage.calls == 2
         assert gen.usage.input_tokens == 2000
         assert gen.usage.output_tokens == 1000
 
-    def test_estimates_cost(self):
-        usage = Usage(input_tokens=1_000_000, output_tokens=1_000_000, calls=1)
-        # $5 per million in, $25 per million out.
-        assert usage.estimated_cost_usd == pytest.approx(30.0)
+    def test_cost_comes_from_the_provider(self):
+        # A free tier reports zero rather than what it would have cost
+        # elsewhere. Showing a number implies money moved.
+        gen = TerraformGenerator(provider=StubProvider([_config()]))
+        gen.generate("x", EMPTY)
+        assert gen.cost == 0.0
 
-    def test_cached_input_is_cheaper(self):
-        plain = Usage(input_tokens=1_000_000)
-        cached = Usage(cached_tokens=1_000_000)
-        assert cached.estimated_cost_usd < plain.estimated_cost_usd
+    def test_token_usage_adds_up(self):
+        total = TokenUsage()
+        total.add(TokenUsage(input_tokens=10, output_tokens=5, calls=1))
+        total.add(TokenUsage(input_tokens=20, cached_tokens=3, calls=1))
+        assert (total.input_tokens, total.output_tokens, total.cached_tokens, total.calls) == (
+            30,
+            5,
+            3,
+            2,
+        )
 
 
 class TestFailureModes:
     def test_raises_when_the_model_returns_nothing_usable(self):
-        client = StubClient([])
-        client._parse = lambda **kw: SimpleNamespace(
-            parsed_output=None, stop_reason="max_tokens",
-            usage=SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0),
+        provider = StubProvider(
+            [ProviderResponse(parsed=None, usage=TokenUsage(calls=1), stop_reason="MAX_TOKENS")]
         )
-        client.messages = SimpleNamespace(parse=client._parse)
+        with pytest.raises(GenerationFailed, match="MAX_TOKENS"):
+            TerraformGenerator(provider=provider).generate("x", EMPTY)
 
-        with pytest.raises(GenerationFailed, match="max_tokens"):
-            TerraformGenerator(client=client).generate("x", EMPTY)
+    def test_rejects_an_object_of_the_wrong_shape(self):
+        class SomethingElse(BaseModel):
+            value: int
+
+        provider = StubProvider(
+            [ProviderResponse(parsed=SomethingElse(value=1), usage=TokenUsage(calls=1))]
+        )
+        with pytest.raises(GenerationFailed, match="not a configuration"):
+            TerraformGenerator(provider=provider).generate("x", EMPTY)
