@@ -36,6 +36,13 @@ build/
 .coverage
 htmlcov/
 
+# `build/` above is Python's packaging output, but the pattern has no leading
+# slash, so it matches a directory of that name at *any* depth — including
+# the front end's /build route, which is a page and not an artifact. Without
+# this exception that route is silently never committed: it works on the
+# machine that wrote it and 404s on a fresh clone.
+!web/app/build/
+
 # ---- Node / Next.js ----
 node_modules/
 .next/

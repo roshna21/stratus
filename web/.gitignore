@@ -17,6 +17,11 @@
 /.next/
 /out/
 
+# Written by `next dev` on every run, not by hand. Committing them means a
+# regenerated copy shows up as a diff after any dev session.
+/AGENTS.md
+/CLAUDE.md
+
 # production
 /build
 

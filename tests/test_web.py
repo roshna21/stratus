@@ -238,6 +238,28 @@ class TestPage:
         assert "https://cdn" not in text
         assert "<script src=" not in text
 
+    def test_the_page_watches_the_build_instead_of_reading_the_reply(self, client):
+        # `/api/apply` answers a started build with a job to watch, not with
+        # a result. The page once read that reply as though it were the
+        # finished answer, so approving a build printed "undefined" and the
+        # build then ran to completion with nothing on screen. This is the
+        # deployed interface — the container copies `stratus/`, not `web/` —
+        # so it broke for everyone who tried the demo and for nobody running
+        # the tests.
+        c, _ = client
+        text = c.get("/").text
+        assert "/api/jobs/" in text
+
+    def test_the_deletion_gate_lives_in_the_page(self, client):
+        # Typed into the page, not into a window.prompt(). A browser may
+        # suppress a prompt, and a suppressed one returns null — which read
+        # as "not DELETE" and cancelled without ever asking. A gate that can
+        # be silently skipped is not a gate.
+        c, _ = client
+        text = c.get("/").text
+        assert "prompt(" not in text
+        assert "'DELETE'" in text
+
     def test_health_check(self, client):
         c, _ = client
         assert c.get("/api/health").json() == {"status": "ok"}

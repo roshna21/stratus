@@ -1,8 +1,41 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const KEY = "stratus.workspace";
+const DEFAULT = "default";
+
+/**
+ * A same-tab companion to the `storage` event.
+ *
+ * The browser fires `storage` in *other* tabs only — never in the one that
+ * wrote the value. Without this, two components in the same page reading the
+ * workspace would disagree the moment one of them changed it.
+ */
+const CHANGED = "stratus.workspace.changed";
+
+function subscribe(notify: () => void) {
+  window.addEventListener("storage", notify);
+  window.addEventListener(CHANGED, notify);
+  return () => {
+    window.removeEventListener("storage", notify);
+    window.removeEventListener(CHANGED, notify);
+  };
+}
+
+function read(): string {
+  return window.localStorage.getItem(KEY) ?? DEFAULT;
+}
+
+/**
+ * What the server renders, before any browser storage exists.
+ *
+ * It must match the client's first render exactly or React reports a
+ * hydration error, so this is the one answer that is always safe.
+ */
+function readOnServer(): string {
+  return DEFAULT;
+}
 
 /**
  * Which set of infrastructure every page is looking at.
@@ -12,33 +45,24 @@ const KEY = "stratus.workspace";
  * and then opening History showed an empty list — which reads as "the build
  * was not recorded" rather than "you are looking somewhere else".
  *
- * Kept in localStorage rather than a React context so it survives a reload.
- * A workspace is a thing you work in for a while, not for one page view.
+ * Kept in localStorage rather than React state so it survives a reload. A
+ * workspace is a thing you work in for a while, not for one page view.
+ *
+ * Subscribed to through useSyncExternalStore rather than copied into state
+ * by an effect. localStorage *is* an external store, and the effect version
+ * had to render the wrong value first and then correct it — a cascading
+ * render that React now warns about, and a visible flicker if the stored
+ * workspace was not the default one.
  */
 export function useWorkspace(): [string, (next: string) => void] {
-  // Starts at the default and is corrected after mount. Reading localStorage
-  // during render would make the server-rendered markup disagree with the
-  // first client render, which React reports as a hydration error.
-  const [workspace, setLocal] = useState("default");
+  const workspace = useSyncExternalStore(subscribe, read, readOnServer);
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(KEY);
-    if (stored) setLocal(stored);
-
-    // Two tabs open on different workspaces, each thinking it knows the
-    // answer, is worse than either being wrong.
-    const sync = (e: StorageEvent) => {
-      if (e.key === KEY && e.newValue) setLocal(e.newValue);
-    };
-    window.addEventListener("storage", sync);
-    return () => window.removeEventListener("storage", sync);
-  }, []);
-
-  const set = (next: string) => {
-    const cleaned = next.trim() || "default";
-    setLocal(cleaned);
+  const set = useCallback((next: string) => {
+    // An empty box means the default, not a workspace with no name.
+    const cleaned = next.trim() || DEFAULT;
     window.localStorage.setItem(KEY, cleaned);
-  };
+    window.dispatchEvent(new Event(CHANGED));
+  }, []);
 
   return [workspace, set];
 }
@@ -53,14 +77,14 @@ export function WorkspaceField({
   disabled?: boolean;
 }) {
   return (
-    <span className="flex items-center gap-2 text-xs text-dim">
+    <span className="flex items-center gap-2 text-[12px] text-fg-faint">
       <label htmlFor="ws">Workspace</label>
       <input
         id="ws"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-32 rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-text outline-none focus:border-accent disabled:opacity-50"
+        className="w-32 rounded-md border border-hairline bg-surface px-2.5 py-1.5 font-mono text-[11px] text-fg outline-none transition-colors focus:border-accent disabled:opacity-50"
       />
     </span>
   );

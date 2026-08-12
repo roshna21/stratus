@@ -41,6 +41,18 @@ export type HistoryEntry = {
 
 export class ApiError extends Error {}
 
+/** The port the front end is actually pointed at, for use in error hints. */
+function apiPort(): string {
+  try {
+    return new URL(BASE).port || "8000";
+  } catch {
+    // A malformed base URL is its own problem and the error below already
+    // prints it in full; falling back keeps the hint useful rather than
+    // replacing it with a crash.
+    return "8000";
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -52,9 +64,15 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     // A failed fetch says "Failed to fetch" and nothing else, which sends
     // people hunting through their own code. The server being down is by far
     // the likeliest cause, so say that.
+    //
+    // The port in the suggested command is read back out of the URL rather
+    // than written down a second time. Hard-coded, it said 8000 while
+    // NEXT_PUBLIC_API_URL pointed at 8811 — so the fix printed under the
+    // error started a server on a port nothing was talking to, and the page
+    // stayed broken after doing exactly what it was told.
     throw new ApiError(
       `Can't reach the Stratus server at ${BASE}. Is it running?\n\n` +
-        `    uvicorn stratus.web:app --port 8000`,
+        `    uvicorn stratus.web:app --port ${apiPort()}`,
     );
   }
 
