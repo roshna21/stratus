@@ -25,7 +25,7 @@ type Body =
   | { kind: "stratus"; text: string }
   | { kind: "error"; text: string }
   | { kind: "plan"; plan: PlanResponse; decided?: "built" | "cancelled" }
-  | { kind: "building"; lines: string[]; done?: string };
+  | { kind: "building"; lines: string[]; done?: string; failed?: boolean };
 
 // The body union is named separately because Omit<> over a union collapses
 // to the keys they share, which is none of the interesting ones.
@@ -130,6 +130,11 @@ export default function BuildPage() {
       });
 
       if (finished.status === "failed") {
+        // Stop the log card spinning before reporting why. Otherwise the
+        // page claims to be building and to have failed at the same time.
+        update(buildKey, (m) =>
+          m.kind === "building" ? { ...m, failed: true } : m,
+        );
         push({ kind: "error", text: finished.error ?? "The build failed." });
       } else {
         update(buildKey, (m) =>
@@ -163,7 +168,9 @@ export default function BuildPage() {
                   onDecide={(answer) => decide(m.key, m.plan, answer)}
                 />
               )}
-              {m.kind === "building" && <Building lines={m.lines} done={m.done} />}
+              {m.kind === "building" && (
+                <Building lines={m.lines} done={m.done} failed={m.failed} />
+              )}
             </div>
           ))}
         </div>
@@ -393,14 +400,35 @@ function PlanCard({
   );
 }
 
-function Building({ lines, done }: { lines: string[]; done?: string }) {
+/**
+ * A build in progress, and how it ended.
+ *
+ * There are three states, not two. A failed build used to keep the spinner
+ * turning for ever — the error was reported in a card underneath, so the
+ * screen said "still building" and "this failed" at the same time, and the
+ * spinner is the one the eye believes.
+ */
+function Building({
+  lines,
+  done,
+  failed,
+}: {
+  lines: string[];
+  done?: string;
+  failed?: boolean;
+}) {
   return (
-    <Card className="p-5">
+    <Card className="p-5" tone={failed ? "danger" : "normal"}>
       <div className="mb-4 flex items-center gap-2.5">
         {done ? (
           <>
             <Dot tone="ok" />
             <span className="text-sm text-ok">Done</span>
+          </>
+        ) : failed ? (
+          <>
+            <Dot tone="danger" />
+            <span className="text-sm text-danger">Stopped partway</span>
           </>
         ) : (
           <Spinner label="Building — this takes a couple of minutes" />

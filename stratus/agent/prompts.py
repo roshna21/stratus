@@ -105,18 +105,32 @@ words: "picked the smallest size, because you said it was a small project".
 """
 
 
-DEFAULT_REGION = "eastus"
+DEFAULT_REGION = "eastus2"
 """Where to build when nothing else is specified.
 
 Not baked into the system prompt: which region has free-tier capacity changes
 by the day, and when one runs out the user needs to move without waiting for
 a code change. Overridden with STRATUS_REGION.
+
+Was `eastus`, which cannot host a static web app — the very thing the prompt
+reaches for first when someone asks for a website. Azure accepts the plan and
+then refuses at apply time with `LocationNotAvailableForResourceType`, so the
+approval screen promised something that could not be built, and the failure
+arrived minutes later with a resource group already created. `staticSites`
+runs in only five regions; this is one of them, and so is everything below.
+Found by asking for "a small website that can store uploaded files".
 """
 
-FALLBACK_REGIONS = ["westus2", "uksouth", "northeurope", "centralindia", "southeastasia"]
+FALLBACK_REGIONS = ["centralus", "westus2", "westeurope", "eastasia"]
 """Suggested when a region turns out to have no room. Not tried automatically:
 a failed apply may have left resources behind, and silently rebuilding
-somewhere else would strand them."""
+somewhere else would strand them.
+
+Every entry must be able to host everything Stratus builds, or the suggestion
+trades a capacity problem for an availability one. That is why the list is
+short: it is the set of regions offering static web apps, which is the
+narrowest of anything here.
+"""
 
 
 def build_user_message(request: str, existing: Snapshot, region: str = DEFAULT_REGION) -> str:

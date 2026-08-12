@@ -98,6 +98,16 @@ system prompt steers to storage-hosted static sites instead.
 **Azure lists regions it operates, not regions you may use.** `westeurope`
 refused outright. There is a fallback list.
 
+**`eastus` cannot host a static web app**, which is the first thing the prompt
+reaches for when someone asks for a website. The plan succeeds and the *apply*
+fails, minutes later, with `LocationNotAvailableForResourceType` — after the
+resource group has already been created. So the approval screen promised
+something unbuildable. `Microsoft.Web/staticSites` runs in five regions only:
+`centralus`, `eastus2`, `westus2`, `westeurope`, `eastasia`. `DEFAULT_REGION`
+is now `eastus2` and every fallback is drawn from that list. Check
+`az provider show -n Microsoft.Web --query "resourceTypes[?resourceType=='staticSites'].locations[]"`
+before adding a region anywhere.
+
 **A resource group's region cannot be changed after creation.**
 
 **Gemini retires models for new accounts.** Use the `gemini-flash-latest`
